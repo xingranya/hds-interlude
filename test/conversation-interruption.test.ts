@@ -31,9 +31,9 @@ test('cancelled split segments become interrupted typing context, not delivered 
     recentEntries: [], memories: [],
   }
   const payload = toPromptPayload(request)
-  assert.equal(payload.interruptedOutgoingDrafts.length, 1)
-  assert.equal(payload.interruptedOutgoingDrafts[0].content, '我刚才其实想说')
-  assert.match(payload.interruptedOutgoingDrafts[0].narrativeContext, /还没打完字，用户的新消息就发来了/)
-  assert.equal(payload.supersededDelayedReplies.length, 1)
-  assert.equal(payload.supersededDelayedReplies[0].payload.content, '晚点回复')
+  assert.equal(payload.ongoingThreads.interruptedOutgoingDrafts.length, 1)
+  assert.equal(payload.ongoingThreads.interruptedOutgoingDrafts[0].content, '我刚才其实想说')
+  assert.match(payload.ongoingThreads.interruptedOutgoingDrafts[0].narrativeContext, /还没打完字，用户的新消息就发来了/)
+  assert.equal(payload.ongoingThreads.supersededDelayedReplies.length, 1)
+  assert.equal(payload.ongoingThreads.supersededDelayedReplies[0].payload.content, '晚点回复')
 })

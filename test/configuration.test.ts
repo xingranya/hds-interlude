@@ -1,15 +1,26 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Config, version } from '../src/index'
-import { hasRequiredNarrativeScript, normalizeGroupVisibleReply, resolveBlindModeConfig, visibleReplyMode } from '../src/service'
+import { hasRequiredNarrativeScript, normalizeGroupVisibleReply, normalizeInteraction, resolveBlindModeConfig, visibleReplyMode } from '../src/service'
 import { configuredProviders, ZHIPU_FIRST_VISIBLE_TOKEN_TIMEOUT } from '../src/narrator'
 import { HDS_INTERLUDE_VERSION } from '../src/meta'
 
+const now = new Date('2026-09-09T12:00:00Z')
+
 test('Console sections follow the documented setup order', () => {
   assert.deepEqual(Object.keys(Config.dict), [
-    'blindMode', 'storyDefaults', 'model', 'onebot', 'runtime', 'schedulePreplan', 'sharedStory', 'chatActions',
-    'stickers', 'agency', 'memory', 'alterSystem', 'browser', 'logging',
+    'storyDefaults', 'model', 'onebot', 'sharedStory', 'runtime', 'urge', 'schedulePreplan', 'timelineDirector', 'agency',
+    'chatActions', 'stickers', 'memory', 'alterSystem', 'browser', 'blindMode', 'logging', 'chatRhythm',
   ])
+  // 分类前缀让配置页按 必填→结构→节奏→表达→内在→扩展→维护 分组可读。
+  const headers = Object.values(Config.dict).map((item: any) => String(item.meta?.description ?? ''))
+  assert.match(headers[0], /^【必填 1】/)
+  assert.match(headers[3], /^【结构 4】/)
+  assert.match(headers[4], /^【节奏 5】/)
+  assert.match(headers[9], /^【表达 10】/)
+  assert.match(headers[11], /^【内在 12】/)
+  assert.match(headers[13], /^【扩展 14】/)
+  assert.match(headers[14], /^【维护 15】/)
 })
 
 test('chat actions are opt-in and platform-scoped', () => {
@@ -47,7 +58,7 @@ test('ignored compatibility switches stay out of the active Console', () => {
 
 test('runtime and plugin exports share one version constant', () => {
   assert.equal(version, HDS_INTERLUDE_VERSION)
-  assert.equal(version, '0.1.4')
+  assert.equal(version, '1.0.1-beta6-rebuild')
 })
 
 test('layered colored logs are the Console default and remain optional', () => {
@@ -60,7 +71,7 @@ test('layered colored logs are the Console default and remain optional', () => {
 
 test('model Console centralizes connections and task assignment without exposing IDs', () => {
   const model = Config.dict.model.dict
-  assert.deepEqual(Object.keys(model).slice(0, 2), ['vision', 'providers'])
+  assert.deepEqual(Object.keys(model).slice(0, 3), ['vision', 'audio', 'providers'])
   assert.equal('mode' in model, false)
   assert.equal('zhipu' in model, false)
   assert.equal('models' in model, false)
@@ -156,10 +167,13 @@ test('Console exposes a separate, optional protagonist perspective layer', () =>
   assert.equal(Config.dict.storyDefaults.dict.perspective.meta.default, '')
 })
 
-test('SnowLuma voice transcription remains an opt-in OneBot capability', () => {
-  const voice = Config.dict.onebot.dict.voiceTranscription.dict
-  assert.equal(voice.enabled.meta.default, false)
-  assert.equal(voice.timeoutMs.meta.default, 20_000)
+test('native audio understanding remains an opt-in main-model capability', () => {
+  const audio = Config.dict.model.dict.audio.dict
+  assert.equal(audio.enabled.meta.default, false)
+  assert.equal(audio.outFormat.meta.default, 'mp3')
+  assert.equal(audio.maxFileSizeMB.meta.default, 10)
+  assert.equal(audio.maxPerMessage.meta.default, 1)
+  assert.equal(Config.dict.onebot.dict.voiceTranscription, undefined)
 })
 
 test('group willingness is opt-in and remains scoped to each group rule', () => {
@@ -174,6 +188,8 @@ test('group transport accepts its explicit field and the legacy immediate intera
   assert.equal(normalizeGroupVisibleReply(undefined, { seen: true, reply: { mode: 'immediate', content: '兼容回复' } }, 100), '兼容回复')
   assert.equal(normalizeGroupVisibleReply(undefined, { seen: true, reply: { mode: 'none' } }, 100), '')
   assert.equal(normalizeGroupVisibleReply({ mode: 'immediate', content: '[表情]' }, undefined, 100), '')
+  assert.equal(normalizeGroupVisibleReply({ mode: 'immediate', content: '第一句<sep>第二句' }, undefined, 100), '第一句<sep/>第二句')
+  assert.equal(normalizeGroupVisibleReply({ mode: 'immediate', content: '第一句＜sep＞第二句' }, undefined, 100), '第一句<sep/>第二句')
 })
 
 test('reply-mode logs distinguish missing live replies from normal background silence', () => {
@@ -182,4 +198,31 @@ test('reply-mode logs distinguish missing live replies from normal background si
   assert.equal(visibleReplyMode({}, 'advance'), '无可见投递')
   assert.equal(visibleReplyMode({ crossConversationActions: [{ participantId: 'friend', mode: 'immediate', content: '在吗' }] }, 'advance'), '主动联系')
   assert.equal(visibleReplyMode({ interaction: { seen: true, reply: { mode: 'none' } } }, 'intent-due'), 'none')
+})
+
+test('normalizeInteraction keeps seen and reply independent so unread silence cannot erase a sent message', () => {
+  const runtime = { maxMessageCharacters: 500, messageSeparator: '<sep/>', minimumDelayedReplySeconds: 10, maximumDelayedReplyMinutes: 120 }
+  // 已读不回：合法状态，原样保留。
+  assert.deepEqual(normalizeInteraction({ seen: true, reply: { mode: 'none' } }, now, runtime as any),
+    { seen: true, reply: { mode: 'none' } })
+  // 未读沉默：合法状态。
+  assert.deepEqual(normalizeInteraction({ seen: false, reply: { mode: 'none' } }, now, runtime as any),
+    { seen: false, reply: { mode: 'none' } })
+  // 跟进/到期回合协议规定 seen=false，但真实发送的回复不得被抹掉。
+  assert.deepEqual(normalizeInteraction({ seen: false, reply: { mode: 'immediate', content: '想起来还没回你' } }, now, runtime as any),
+    { seen: false, reply: { mode: 'immediate', content: '想起来还没回你' } })
+  // immediate 缺 content 与非法 mode 的既有语义不变。
+  assert.deepEqual(normalizeInteraction({ seen: false, reply: { mode: 'immediate' } }, now, runtime as any),
+    { seen: false, reply: { mode: 'none' } })
+  assert.equal(normalizeInteraction({ seen: true, reply: { mode: 'later' } }, now, runtime as any), undefined)
+})
+
+test('delayed replies outside the allowed window still collapse to none regardless of seen', () => {
+  const runtime = { maxMessageCharacters: 500, messageSeparator: '<sep/>', minimumDelayedReplySeconds: 10, maximumDelayedReplyMinutes: 120 }
+  const sendAt = new Date(now.getTime() + 5 * 60_000).toISOString()
+  assert.deepEqual(normalizeInteraction({ seen: false, reply: { mode: 'delayed', content: '晚点说', sendAt } }, now, runtime as any),
+    { seen: false, reply: { mode: 'delayed', content: '晚点说', sendAt } })
+  const tooSoon = new Date(now.getTime() + 1_000).toISOString()
+  assert.deepEqual(normalizeInteraction({ seen: true, reply: { mode: 'delayed', content: '太早', sendAt: tooSoon } }, now, runtime as any),
+    { seen: true, reply: { mode: 'none' } })
 })

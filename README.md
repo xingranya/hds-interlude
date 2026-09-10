@@ -6,7 +6,7 @@
 
 HDS Interlude 是一个面向 Koishi 一对一与多参与者场景的持续叙事聊天框架。它让用户消息、角色的沉默、延迟回复、主动联系和自动推进，都成为同一段生活剧本中自然可见的部分，并由一次主叙事写作连贯地决定。
 
-当前版本：`0.1.4`。提供宿主时间轴、持续生活剧本、结构化投递、Schedule Preplan、群聊意愿、多提供商模型连接与可选聊天动作。
+当前版本：`1.0.1-beta6-rebuild`。高度剧本化核心与完整原文保持不变：正文行动引用连接实际发言，时间导演只提供窗口建议，原文引用交接当前生活。beta14 修复 OneBot 账号过滤默认值：未配置时不再被空默认白名单拒收全部私聊（typ-0 桌面剧本实测发现）；启用过滤仍须显式配置白名单；其余行为不变。详见 [更新记录](docs/CHANGELOG.md) 与 [文档索引](docs/README.md)。
 
 ## 文档导航
 
@@ -128,7 +128,7 @@ flowchart TD
 
 `model.mainPayloadOrder=cache-first` 会把用户 payload 的对话历史与低频记忆层前置、每轮变化字段（当前事件、时钟、状态）后置。对支持自动前缀缓存的服务商（DeepSeek、GLM、Kimi 等），连续对话轮可以命中长长的稳定前缀，输入成本与 prefill 延迟显著下降；payload 末尾附带 `recentExchange` 最近交换块，把最后几条交互重新锚定在生成点旁，维持语境显著性。默认 `legacy` 保持历史顺序。开启后建议先在沙盒观察若干轮回复质量与 `回复模式` 分布，不适配可随时切回。
 
-自动推进不把 cache-first 当作世界时间来源：插件会先复用压缩模型生成当前时间窗口内的事件账本，再让主叙事渲染。`recentExchange` 只含真实收发消息，不复制上一段剧本文字，因此缓存优化不会导致自动 prose 自我复读或越过当前时钟。
+自动推进不把 cache-first 当作世界时间来源：时间导演提供当前窗口内的推进建议，主叙事写出实际生活，宿主约束时间端点。beta6 不再把新计划自动当作完成事实；旧自动条目仍保留原账本解释。`recentExchange` 只含真实收发消息，不复制上一段剧本文字。实际是否复写仍需模型实机观察，不能仅凭缓存模式保证。
 
 ## 自动推进与剧情余波
 
@@ -210,7 +210,7 @@ Alter System 是一个动态氛围响应机制，用于解决长期对话中角�
 
 ### 关键特性
 
-- **低侵入性**：在 `recentScript + continuitySnapshot` 的连续性核心旁加入一层临时氛围参考
+- **低侵入性**：在原始剧本及来源化连续性资料旁加入临时氛围参考；beta6 已停用实时 continuitySnapshot 的重复生成
 - **动态阈值**：根据对话密度自动调整触发频率，密集对话时更敏感，长间隔对话时更宽容
 - **轻量级**：在达到触发条件时调用侧端模型，将额外请求集中在真正需要的节点
 - **顺序协作**：达到阈值后先完成本轮持久化与消息投递，再在故事串行队列中执行侧端分析
@@ -287,19 +287,19 @@ npm install koishi-plugin-hds-interlude@beta
 使用本地预发布包时，可在 Koishi 实例目录执行：
 
 ```bash
-npm install /absolute/path/to/koishi-plugin-hds-interlude-0.1.4.tgz
+npm install /absolute/path/to/koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz
 ```
 
 Windows 示例：
 
 ```powershell
-npm install C:\dev\HDS-Interlude\plugins\hds-interlude\release\koishi-plugin-hds-interlude-0.1.4.tgz
+npm install C:\dev\HDS-Interlude\plugins\hds-interlude\release\koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz
 ```
 
 Koishi Desktop 的实例使用 Yarn 4。请在实例目录执行以下命令，并在完成后重载插件或重启 Desktop：
 
 ```powershell
-corepack yarn add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-0.1.4.tgz" --exact
+corepack yarn add "koishi-plugin-hds-interlude@file:C:/dev/HDS-Interlude/plugins/hds-interlude/release/koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz" --exact
 ```
 
 安装后重新加载 Koishi，再在 Console 启用插件。
@@ -320,7 +320,7 @@ OneBot / NapCat 未启动时可能出现 `ECONNREFUSED`，表示适配器正在�
 
 建议按以下顺序配置，以更快建立可验证的互动闭环：
 
-1. **失明模式**：首次配置保持关闭；稳定运行后可开启以获得无命令、极少 HDSI 日志的沉浸式对话。
+1. **盲区模式（原“失明模式”）**：首次配置保持关闭；稳定运行后可开启以获得无命令、极少 HDSI 日志的沉浸式对话。
 2. **基础设定**：主角、世界、配角、叙事风格、默认关系。
 3. **模型中心**：先确认图片理解方式；每个模型连接只填一次地址、密钥和模型名，再勾选它承担主叙事、压缩、Alter、Embedding、表情包描述或侧端识图的用途；下方分别调整各任务的采样与输出。
 
@@ -368,7 +368,7 @@ interlude.purge.range 2026-08-18T13:00:00+08:00 2026-08-19T02:00:00+08:00
 
 ## 日志与排查
 
-### 失明模式
+### 盲区模式（原“失明模式”）
 
 `blindMode.enabled=true` 会关闭 HDSI 管理指令、静默拦截当前 Koishi 实例中已解析的命令，并隐藏 HDSI 的普通运行日志与错误详情；系统只按 `blindMode.healthReportMinutes` 输出不含故事或账号内容的健康心跳。它适合希望对话保持高度沉浸、且模型与账号配置已经稳定正常的场景。失明模式只收束 HDSI 自身日志；其它插件仍遵循各自的日志配置。需要恢复管理时，请在 Console 关闭该开关并重载插件。
 

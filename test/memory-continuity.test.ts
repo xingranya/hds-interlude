@@ -34,9 +34,9 @@ test('legacy free-text continuity next is hidden and host-owned upcoming plans r
     activeConsequences: [], supersededIntents: [], recentEntries: [], memories: [],
   }
   const payload = toPromptPayload(request) as any
-  assert.deepEqual(payload.continuitySnapshot.next, [])
-  assert.equal(payload.state.continuitySnapshot, undefined)
-  assert.equal(payload.upcomingPlans[0].summary, '下周完成体检')
+  assert.deepEqual(payload.relevantEstablishedEpisodes.continuitySnapshot.next, [])
+  assert.equal(payload.ongoingThreads.state.continuitySnapshot, undefined)
+  assert.equal(payload.availableNearFuture.upcomingPlans[0].summary, '下周完成体检')
   const refresh = systemPrompt('user-message', '', '', '', '', '', true)
   assert.match(refresh, /Do not copy or create free-text future plans/)
   assert.doesNotMatch(refresh, /"next":\[/)
@@ -52,7 +52,8 @@ test('raw messages inside the time window survive a large prose entry and the no
     ],
   }
   const payload = toPromptPayload(request) as any
-  assert.ok(payload.recentScript.some((item: any) => item.content === '拿到了。'))
+  assert.ok(payload.relevantEstablishedEpisodes.recentScript.some((item: any) => item.content === '拿到了。'))
+  assert.equal(payload.relevantEstablishedEpisodes.recentScript.find((item: any) => item.id === 2).content, request.recentEntries[1].content)
 })
 
 function fact(id: number, scope: NarrativeFact['scope'], unresolved: boolean, content: string): NarrativeFact {
@@ -78,6 +79,24 @@ test('fact retrieval reserves lanes for recently resolved events and open promis
   assert.ok(selected.some(item => item.id === promise.id))
 })
 
+test('fact retrieval scans a broad bounded pool and lets literal old evidence outrank generic rows', async () => {
+  const target = { ...fact(999, 'event', false, '星期二男孩是 13 号，不是 27 号'), importance: 0.1 }
+  const crowded = Array.from({ length: 220 }, (_, index) => fact(index + 1, 'event', true, `普通高重要度事件 ${index}`))
+  let generalLimit = 0
+  const service = {
+    memoryConfig: { factLimit: 5, maxFactsPerStory: 100, factImportanceWeight: 0.5, factConfidenceWeight: 0.35, factRecencyWeight: 0.15, semanticWeight: 0.55, unresolvedWeight: 0.2 },
+    config: { model: { embedding: { liveQuery: false } } },
+    dbGet: async (_table: string, query: any, options: any) => {
+      if (query.scope) return []
+      generalLimit = options.limit
+      return [...crowded, target]
+    },
+  }
+  const selected = await (InterludeService.prototype as any).facts.call(service, 'story', 5, '星期二男孩 13 号', undefined) as NarrativeFact[]
+  assert.ok(generalLimit >= 300)
+  assert.equal(selected[0].id, target.id)
+})
+
 test('an explicit resolved fact can close the old unresolved row', async () => {
   const existing = fact(12, 'promise', true, '奶茶配送事项')
   let patch: any
@@ -88,16 +107,18 @@ test('an explicit resolved fact can close the old unresolved row', async () => {
     embedText: async () => [],
   }
   const source = entry(1, 'script', '奶茶已经取回', now)
+  existing.participantId = source.participantId
   const resolved = await (InterludeService.prototype as any).persistFact.call(service, 'story', {
     scope: 'promise', content: '奶茶配送事项', unresolved: false, sourceEntryIds: [1],
+    knowledge: { mode: 'observed', clauses: [{ role: 'observation', sourceEntryId: 1, quote: '奶茶已经取回' }] },
   }, [source], now)
   assert.equal(resolved, true)
   assert.equal(patch.unresolved, false)
 })
 
-test('continuity dirty state forces the next refresh before the fifteen-turn cadence', () => {
+test('legacy continuity dirty state does not restart an independent real-time summary', () => {
   const current = story()
   current.state.continuityDirty = true
   current.state.narrativeUpdateCount = 3
-  assert.equal((InterludeService.prototype as any).shouldRefreshContinuity.call({}, current, 'user-message'), true)
+  assert.equal((InterludeService.prototype as any).shouldRefreshContinuity.call({}, current, 'user-message'), false)
 })

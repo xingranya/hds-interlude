@@ -1,6 +1,6 @@
 # Agency Window
 
-适用版本：`0.1.4`
+适用版本：`1.0.1-beta6-rebuild`
 
 ## 定位
 

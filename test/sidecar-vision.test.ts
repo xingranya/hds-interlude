@@ -22,8 +22,8 @@ test('sidecar observations remain in the current event and never become native i
     images: [],
     visualObservations: ['1. 一只橘猫趴在键盘上。'],
   })) as any
-  assert.deepEqual(payload.currentEvent.visualObservations, ['1. 一只橘猫趴在键盘上。'])
-  assert.equal(payload.currentEvent.content, '看看这张图')
+  assert.deepEqual(payload.incomingEvent.event.visualObservations, ['1. 一只橘猫趴在键盘上。'])
+  assert.equal(payload.incomingEvent.event.content, '看看这张图')
   assert.match(systemPrompt('user-message', '', '', '', '', ''), /visualObservations/)
 })
 

@@ -7,9 +7,20 @@ test('Alter scoring is requested only while the system is enabled', () => {
   const enabled = systemPrompt('user-message', '', '', '', '', '', false, true)
   assert.match(enabled, /integer field named alter from -5 to \+5/)
   assert.match(enabled, /not the existing atmosphere/)
+  assert.match(enabled, /bounded internal weather/)
+  assert.match(enabled, /may color the rhythm and form of her messages/)
+  assert.match(enabled, /still choose their content and direction/)
 
   const disabled = systemPrompt('user-message', '', '', '', '', '', false, false)
-  assert.match(disabled, /Do not output an alter field/)
+  assert.doesNotMatch(disabled, /field named alter/)
+})
+
+test('current events lead reappraisal before relationship tendencies', () => {
+  const prompt = systemPrompt('user-message', '', '', '', '', '', false, false)
+  assert.match(prompt, /immediate relational thread/)
+  assert.match(prompt, /established tendencies supply nuance/)
+  assert.match(prompt, /New events can sustain or revise that reading/)
+  assert.match(prompt, /a tendency is context, never a verdict/)
 })
 
 test('internal Alter accumulator and history never leak into the main prompt state', () => {
@@ -57,19 +68,34 @@ test('each request includes only its current phase strategy', () => {
   const followUp = systemPrompt('conversation-follow-up', '', '', '', '', '', false, false)
   const due = systemPrompt('intent-due', '', '', '', '', '', false, false)
   assert.match(user, /CURRENT PHASE: USER MESSAGE/)
-  assert.match(user, /same chat content as interaction\.reply/)
-  assert.match(user, /until interaction\.reply carries it to the user/)
-  assert.match(user, /always include groupReply with the shape/)
-  assert.match(user, /same text as groupReply/)
+  assert.match(user, /SCRIPT-FIRST TRANSPORT MIRROR/)
+  assert.match(user, /For this private turn, return interaction/)
+  assert.doesNotMatch(user, /return groupReply as/)
   assert.doesNotMatch(user, /INDEPENDENT LIFE ADVANCE/)
   assert.match(advance, /CURRENT PHASE: INDEPENDENT LIFE ADVANCE/)
-  assert.match(advance, /pair it with one matching immediate crossConversationAction/)
-  assert.match(advance, /consideration, draft, or later possibility/)
+  assert.match(advance, /This independent-life phase has no current reply channel/)
+  assert.doesNotMatch(advance, /For this private turn, return interaction/)
   assert.doesNotMatch(advance, /interruptedOutgoingDrafts/)
-  assert.match(followUp, /same delivered text in prose and content/)
-  assert.match(followUp, /until interaction\.reply carries it to the user/)
+  assert.match(followUp, /place its exact words at the sending action in script/)
   assert.match(due, /CURRENT PHASE: DUE INTENT/)
-  assert.doesNotMatch(due, /crossConversationActions are optional proactive contacts/)
+  assert.match(due, /For this private turn, return interaction/)
+})
+
+test('private interaction protocol is neutral about reading and explicit about read-but-silent', () => {
+  const user = systemPrompt('user-message', '', '', '', '', '', false, false)
+  // 协议示例不得用字面 false 充当默认值（弱指令模型会照抄示例值）。
+  assert.doesNotMatch(user, /interaction as \{"seen":false/)
+  assert.match(user, /"seen":<true\|false>/)
+  assert.match(user, /seen and reply are independent fields/)
+  // 已读不回是明确合法的普通状态。
+  assert.match(user, /seen=true with reply\.mode=none is the ordinary read-but-does-not-answer state/)
+  // 无 say 标记时允许 content 直传，堵住"只教 actionId"的静默丢弃悬崖。
+  assert.match(user, /supply reply\.content directly instead of an id/)
+  // 未读计数是客观到达记录，不是注意力或义务。
+  assert.match(user, /unreadMessageCount is the registered count of arrived messages not yet marked read/)
+  // 跟进/到期回合：seen=false 不得再暗示回复必须为 none。
+  const followUp = systemPrompt('conversation-follow-up', '', '', '', '', '', false, false)
+  assert.match(followUp, /reply may still be immediate or delayed when a message is genuinely sent now/)
 })
 
 test('a missing visible-reply structure triggers a fresh-output recovery instruction', () => {
@@ -100,7 +126,7 @@ test('Agency Window is available only on background action phases and stays sepa
   assert.match(advance, /recheck-later/)
 
   const user = systemPrompt('user-message', '', '', '', '', '', false, true, true)
-  assert.match(user, /Do not output agencyWindow or proactiveContact on this phase/)
+  assert.doesNotMatch(user, /agencyWindow may be/)
   assert.doesNotMatch(user, /Agency Window describes only practical action capacity/)
 })
 

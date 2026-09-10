@@ -1,10 +1,12 @@
 # 当前架构
 
-适用版本：`0.1.4`
+适用版本：`1.0.1-beta6-rebuild`
+
+当前增量：事实/工作细节使用 knowledge 保存认知主体、证据角色与条件来源；contactThreads 给主叙事和时间导演提供同事项原始联系链。派生记录、主角相信的事与实际沟通结果分开解释，原文不裁写为第二份剧本。发送端将同一动作的完整分隔块映射至原有逐段回执链。详见 [实现报告](development/BETA6_EVIDENCE_DELIVERY_REPAIR.md)。
 
 ## 核心原则
 
-HDS Interlude 使用 `0.1.1-beta6` 验证过的自然语言连续性路线：近期上下文以原始剧本为主，低频 continuitySnapshot 和长期事实负责跨时间衔接。已回滚的 sceneTrace、sceneState、storyHook、logicalTurn 和 relationshipMoment 不属于当前架构。
+HDS Interlude 1.0 以持续剧本为唯一叙事主链：原始剧本保存生活与人物理解，实际通信由同一行动的投递结果确认。`lifeHandoff` 以原文引用交接局部活动与在场人物，`SceneFrame` 是可重建导航，不是第二份当前真相。实时 continuitySnapshot 已停用；跨时间衔接仍由原始召回、scene/arc 后台整理、长期事实与未决意图承担。
 
 用户消息是进入主角生活的真实外部事件。主模型在一个回合内补写从故事游标到现在已经发生的生活，并决定看见、沉默、立即回复、延迟回复或产生其它受限行动。自动推进围绕主角已在进行的生活展开。
 
@@ -20,6 +22,15 @@ HDS Interlude 使用 `0.1.1-beta6` 验证过的自然语言连续性路线：近
 | `src/time.ts` | 时区校验、本地时间端点、日照时段和复用的 Intl formatter 缓存 |
 | `src/schedule-preplan.ts` | Schedule Preplan 校验、周规律与例外合并、日期展开、半日投影和推进锚点 |
 | `src/narrator.ts` | OpenAI-compatible 主叙事、压缩、Embedding 与 Alter 侧端分析请求 |
+| `src/script/scene-frame.ts` | 带 entry 来源的 SceneFrame 投影、DialogueBurst 身份与提交后即时视图更新 |
+| `src/script/context-compiler.ts` | 七段式正向续写上下文编译；把旧资料层变成唯一剧本支架 |
+| `src/script/contract.ts` | ScriptCommit、SceneDelta 与剧本事件内部协议 |
+| `src/script/authored-actions.ts` | 正文 say 标记解析与 transport 引用；兼容旧 content 和提前流式发送 |
+| `src/script/life-handoff.ts` | 本轮原文引用校验、局部状态交接及新旧时间证据分流 |
+| `src/script/development.ts` | 独立场景计数、人物倾向查询、用户反馈与实际回应的证据链 |
+| `src/turn-persistence.ts` / `src/delivery.ts` / `src/script/delivery-ledger.ts` | 剧本提交持久化、消息事件投递与按 segment 回写的 M6.1 结果账本 |
+| `src/story-state.ts` | 版本化故事状态编解码和幂等升级 |
+| `src/model-routing.ts` | 启动时一次解析所有模型任务路由 |
 | `src/database.ts` | 13 张 HDSI 数据表 |
 | `src/types.ts` | 当前跨模块数据协议 |
 | `src/meta.ts` | 构建与运行时共享的唯一版本常量 |
@@ -28,15 +39,16 @@ HDS Interlude 使用 `0.1.1-beta6` 验证过的自然语言连续性路线：近
 
 1. 私聊或群聊事件先写入 `interlude_script_entry`；启用 SnowLuma 语音转写时，私聊 `record` 先转为带来源标记的文本，并与当前文字、图片合并为同一个事件。
 2. 同一关系分支的连续消息在短时间内合并；过期模型结果不会落库。
-3. 服务读取近期原始剧本、continuity、参与者状态、事实、意图、Overlay、网页观察和当前事件。
-4. 自动推进、对话后续与到期意图先由复用压缩模型的时间导演生成 1–4 个相对时间 beats；宿主校验它们位于当前窗口内。主模型只渲染该事件账本，不再独自决定世界时间。
-5. 主模型返回非空 `script`、互动决定和允许的结构化副产物；空剧本被视为语义失败，用户回合保留为可重试任务。Alter 开启时同时返回本轮净变化分数。
-6. 服务把验证后的 timelinePlan 写入自动剧本元数据；后续提示只读取该事件账本，不把自动 prose 当作下一轮的时间事实，再执行受权限和时间约束的消息投递。
-7. 后台扫描处理自动生活推进、到期意图、记忆压缩、Schedule Preplan 每日审查、Overlay 压缩、网页观察和旧事实向量补齐。
+3. 服务从已有 scene、在场表、working details、Agency 与近期可见剧本确定性投影只读 `SceneFrame`；同一 scene 的消息共享 `DialogueBurst`，时间间隔和消息数量都不改变其身份。
+4. 上下文编译器把事实组织为 `storyIdentity → relevantEstablishedEpisodes → currentSceneFrame → ongoingThreads → availableNearFuture → incomingEvent → authoringWindow`。近期剧本原文仍然保留，当前消息只出现于 incomingEvent。
+5. 需要导演的自动窗口先生成 1–4 个建议 beats；短且无结构边界的后续窗口直接续写。宿主仍拥有时间边界，主模型写出实际生活。新计划不自动晋升为历史；旧版自动条目继续保留 legacy ledger 的时间解释。
+6. 主模型按兼容 JSON 返回一次结果；即时通信优先在正文内使用 say 标记并由 transport.actionId 引用。解析后原话进入原始正文与既有发送器，宿主提交带 frameId/burstId 的 `ScriptCommit`。lifeHandoff 只引用本轮原文，不要求模型再编写一份场景摘要。
+7. 提交成功后，SceneDelta 只追加本轮事件和 prose；同一事件的气泡、贴图、原生表情与群反应登记为投递 segment，并在平台执行后回写 `pending | delivered | partial | failed | cancelled`。共享 SceneFrame 不保存私聊或群聊 prose 措辞，避免跨关系泄漏。
+8. 后台扫描处理自动生活推进、到期意图、记忆压缩、Schedule Preplan 每日审查、Overlay 压缩、网页观察和旧事实向量补齐。
 
-payload 字段顺序默认 `legacy`；`mainPayloadOrder=cache-first` 按变异频率重排为「稳定身份块 → 追加式历史 → 低频记忆层 → 每轮变化字段」，使支持前缀缓存的服务商跨轮命中稳定前缀，并在末尾以 `recentExchange` 重复最近几条交互维持生成点旁的语境显著性。cache-first 会额外加入这一强调块，并将 recentScript 的存储元数据投影为紧凑标签；两种模式承载的叙事事实一致，但 JSON 结构并非逐字节相同。
+两种 payload 模式都使用同一个七段式上下文协议。`mainPayloadOrder=cache-first` 会把 recentScript 元数据投影为紧凑标签，并在 established episodes 内增加 `recentExchange`；其余事实与普通模式一致，追加式历史仍位于当前 SceneFrame 和当前事件之前。
 
-`recentExchange` 仅投影真实收发消息和已投递动作，绝不复制 `script` prose。自动剧本的下一轮投影优先使用宿主保存的相对时间 beats，避免前一段文学渲染被模型误作新的当前事件或续写模板。
+`recentExchange` 仅投影真实收发消息和已投递动作，绝不复制 `script` prose。新自动剧本保留原文，历史计划以 proposedTimeline 明示；无实际发送行动的段落附带执行注解，不能仅凭“她发了一句”证明已发送。旧版账本投影保留兼容。两种 payload 顺序携带相同的这些证据。
 
 群聊可选的 willingness 层位于群消息缓冲与主叙事之间：它只维护每个群的内存分数，以半衰减、边际递减、阈值概率和成功发言成本决定普通 `always` 群消息是否值得进入主模型。它不写数据库、不调用模型、不影响私聊、Alter 或 Agency；@ 机器人绕过该概率门。
 
@@ -48,7 +60,8 @@ Alter 达到阈值时，本轮只保存累计状态并安排后台分析。当�
 | --- | --- |
 | Canon | 主角、世界、地点、配角、初始关系和风格的起点 |
 | recentScript | 最近原始剧本和真实收发记录；保留语义、顺序和细节 |
-| continuitySnapshot | 低频更新的当前状态、近期事实和重要事项；不再复制自由文本未来计划 |
+| continuitySnapshot | 历史兼容数据，不再由主模型实时生成；有原始剧本时不投影 |
+| lifeHandoff | 单次正文的地点/活动/在场/完成引用，按事件交接局部生活 |
 | 长期事实 | 可检索的承诺、事件、世界与关系事实 |
 | active consequence | 已发生事件的短期余波，不重写 Canon |
 | Overlay | 达到证据门槛后的稳定演化 |

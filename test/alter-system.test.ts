@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   adjustAlterWeight, advanceAlterSystem, calculateAlterThreshold, completeAlterAnalysis,
-  createAlterSystemState, emotionalOffsetForPrompt, normalizeAlterSystemState, normalizeAlterValue,
+  alterHistoryForScope, alterScopeValue, createAlterSystemState, emotionalOffsetForPrompt,
+  normalizeAlterSystemState, normalizeAlterValue,
 } from '../src/alter'
 import { AlterHistoryEntry, AlterSystemConfig } from '../src/types'
 
@@ -78,4 +79,33 @@ test('legacy persisted Alter state is normalized without exposing duplicate weig
   const prompt = emotionalOffsetForPrompt(normalized, config)
   assert.equal(prompt?.weight, 0.75)
   assert.equal('weight' in (normalized?.emotionalOffset ?? {}), false)
+})
+
+test('Alter keeps relationship-local accumulation and analysis evidence in the same source bucket', () => {
+  const now = new Date('2026-09-06T12:00:00.000Z')
+  let state = createAlterSystemState(now)
+  const aliceFirst = advanceAlterSystem(state, 6, 'user-message', now, config, 'alice')
+  state = aliceFirst.state
+  const bobFirst = advanceAlterSystem(state, 6, 'user-message', new Date(now.getTime() + 1_000), config, 'bob')
+  state = bobFirst.state
+
+  // Story-level diagnostics still see twelve points, but neither private
+  // relationship may borrow the other's evidence to trigger an analysis.
+  assert.equal(state.alterValue, 12)
+  assert.equal(aliceFirst.thresholdReached, false)
+  assert.equal(bobFirst.thresholdReached, false)
+  assert.equal(alterScopeValue(state, 'alice'), 6)
+  assert.equal(alterScopeValue(state, 'bob'), 6)
+
+  const aliceTrigger = advanceAlterSystem(state, 4, 'conversation-follow-up', new Date(now.getTime() + 2_000), config, 'alice')
+  assert.equal(aliceTrigger.thresholdReached, true)
+  assert.equal(aliceTrigger.sourceParticipantId, 'alice')
+  assert.equal(aliceTrigger.triggerValue, 10)
+  assert.equal(alterHistoryForScope(aliceTrigger.state.history, 'alice').length, 2)
+  assert.equal(alterHistoryForScope(aliceTrigger.state.history, 'bob').length, 1)
+
+  const completed = completeAlterAnalysis(aliceTrigger.state, '她在这段关系里变得更谨慎。', aliceTrigger.threshold, now, config, 'alice')
+  assert.equal(alterScopeValue(completed, 'alice'), 0)
+  assert.equal(alterScopeValue(completed, 'bob'), 6)
+  assert.equal(completed.alterValue, 6)
 })

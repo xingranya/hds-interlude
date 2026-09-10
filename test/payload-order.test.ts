@@ -35,27 +35,30 @@ function commonPrefixLength(left: string, right: string) {
   return index
 }
 
-test('legacy payload keeps the historical key order and ignores the cacheFirst=false option', () => {
+test('both payload modes use the seven-part script continuation scaffold', () => {
   const req = request([entry(1, 'character-message', '拿到了。确实挺大杯。', 50)], '你健忘吗')
   const legacy = toPromptPayload(req) as Record<string, unknown>
   const explicitOff = toPromptPayload(req, { cacheFirst: false }) as Record<string, unknown>
   assert.deepEqual(Object.keys(explicitOff), Object.keys(legacy))
-  assert.equal(Object.keys(legacy)[0], 'phase')
-  assert.equal(Object.keys(legacy)[Object.keys(legacy).length - 1], 'recentScript')
-  assert.equal('recentExchange' in legacy, false)
+  assert.deepEqual(Object.keys(legacy), [
+    'storyIdentity', 'relevantEstablishedEpisodes', 'currentSceneEvidence', 'ongoingThreads',
+    'availableNearFuture', 'incomingEvent', 'authoringWindow',
+  ])
+  assert.equal('recentExchange' in (legacy as any).relevantEstablishedEpisodes, false)
 })
 
 test('cache-first puts stable blocks first and per-turn fields beside the decision point', () => {
   const req = request([entry(1, 'character-message', '拿到了。确实挺大杯。', 50)], '你健忘吗')
   const payload = toPromptPayload(req, { cacheFirst: true }) as Record<string, unknown>
   const keys = Object.keys(payload)
-  assert.equal(keys[0], 'setting')
-  assert.equal(keys[1], 'recentScript')
-  assert.ok(keys.indexOf('durableFacts') < keys.indexOf('memories'))
-  assert.equal(keys[keys.length - 2], 'currentEvent')
-  assert.equal(keys[keys.length - 1], 'recentExchange')
-  assert.ok(keys.indexOf('interval') > keys.indexOf('recentScript'))
-  assert.ok(keys.indexOf('phase') > keys.indexOf('groupContext') || !('groupContext' in payload))
+  assert.deepEqual(keys, [
+    'storyIdentity', 'relevantEstablishedEpisodes', 'currentSceneEvidence', 'ongoingThreads',
+    'availableNearFuture', 'incomingEvent', 'authoringWindow',
+  ])
+  const established = payload.relevantEstablishedEpisodes as Record<string, unknown>
+  assert.equal(Object.keys(established)[0], 'recentScript')
+  assert.ok('recentExchange' in established)
+  assert.ok('interval' in (payload.authoringWindow as Record<string, unknown>))
 })
 
 test('recentExchange anchors only transport exchanges, excludes the live message and never repeats script prose', () => {
@@ -67,7 +70,7 @@ test('recentExchange anchors only transport exchanges, excludes the live message
     entry(5, 'user-message', '你健忘吗', 5),
   ], '你健忘吗')
   const payload = toPromptPayload(req, { cacheFirst: true }) as any
-  const items = payload.recentExchange
+  const items = payload.relevantEstablishedEpisodes.recentExchange
   assert.equal(items.length, 3)
   const received = items.find((item: any) => item.content === '拿到了。确实挺大杯。')
   assert.equal(received?.tag, 'protagonist')
@@ -78,7 +81,7 @@ test('recentExchange anchors only transport exchanges, excludes the live message
   assert.ok(items.some((item: any) => item.content.includes('旧的一句')), '跳过剧本文字后，最近三条真实收发消息应补足尾部块')
 })
 
-test('consecutive user turns share a long serialized prefix under cache-first but not under legacy', () => {
+test('consecutive user turns keep append-only history at the cacheable front of the compiled context', () => {
   const longScript = '剧'.repeat(3_000)
   const turnOne = request([
     entry(1, 'script', longScript, 60),
@@ -98,14 +101,15 @@ test('consecutive user turns share a long serialized prefix under cache-first bu
   const cacheTwo = JSON.stringify(toPromptPayload(turnTwo, { cacheFirst: true }))
   const cachePrefix = commonPrefixLength(cacheOne, cacheTwo)
   // 分叉点恰好是 recentScript 数组的收口：追加式历史让旧内容全部留在缓存前缀内。
-  const historyEnd = cacheOne.indexOf('],"durableFacts"')
+  const historyEnd = cacheOne.indexOf('],"sceneContext"')
   assert.ok(cachePrefix >= historyEnd - 1, '前缀分叉点不得早于对话史数组结束')
   assert.ok(cachePrefix >= cacheOne.length * 0.5, `cache-first 前缀命中过短: ${cachePrefix}/${cacheOne.length}`)
-  assert.ok(cachePrefix < cacheOne.indexOf('"currentParticipant"'), '分叉点应位于每轮变化区开始之前')
+  assert.ok(cachePrefix < cacheOne.indexOf('"currentSceneEvidence"'), '分叉点应位于当前场景证据视图之前')
 
   const legacyOne = JSON.stringify(toPromptPayload(turnOne))
   const legacyTwo = JSON.stringify(toPromptPayload(turnTwo))
-  assert.ok(commonPrefixLength(legacyOne, legacyTwo) < 200, 'legacy 顺序本就无法命中前缀缓存，此断言用于对比基线')
+  assert.ok(commonPrefixLength(legacyOne, legacyTwo) >= legacyOne.indexOf('],"sceneContext"') - 1)
+  assert.ok(cacheOne.length < legacyOne.length, 'compact tags should keep cache-first payload smaller')
 })
 
 test('group turns keep recentExchange empty because groupContext already ends near the decision point', () => {
@@ -113,7 +117,7 @@ test('group turns keep recentExchange empty because groupContext already ends ne
     groupContext: { groupId: '111', channelId: '111', label: '群', purpose: '闲聊', characterRole: '群友', messages: [] },
   })
   const payload = toPromptPayload(req, { cacheFirst: true }) as any
-  assert.deepEqual(payload.recentExchange, [])
+  assert.deepEqual(payload.relevantEstablishedEpisodes.recentExchange, [])
 })
 
 test('compact tags collapse kind/actor triples and keep group and action distinctions', () => {
@@ -127,20 +131,20 @@ test('compact tags collapse kind/actor triples and keep group and action distinc
     entry(7, 'intent-cancelled', 'g', 44),
   ], '当前消息')
   const payload = toPromptPayload(req, { cacheFirst: true }) as any
-  assert.deepEqual(payload.recentScript.map((item: any) => item.tag), [
+  assert.deepEqual(payload.relevantEstablishedEpisodes.recentScript.map((item: any) => item.tag), [
     'protagonist', 'protagonist(group)', 'protagonist(action)', 'protagonist-narration', 'user', 'group-member', 'system',
   ])
-  assert.ok(payload.recentScript.every((item: any) => !('participantId' in item)))
+  assert.ok(payload.relevantEstablishedEpisodes.recentScript.every((item: any) => !('participantId' in item)))
 })
 
 test('participantId survives only when the history actually spans several branches', () => {
   const same = [entry(1, 'user-message', 'a', 50), entry(2, 'character-message', 'b', 49)]
   const payloadSame = toPromptPayload(request(same, 'x'), { cacheFirst: true }) as any
-  assert.ok(payloadSame.recentScript.every((item: any) => !('participantId' in item)))
+  assert.ok(payloadSame.relevantEstablishedEpisodes.recentScript.every((item: any) => !('participantId' in item)))
   const mixed = [...same]
   mixed[1] = { ...mixed[1], participantId: 'onebot:bot:222' }
   const payloadMixed = toPromptPayload(request(mixed, 'x'), { cacheFirst: true }) as any
-  assert.ok(payloadMixed.recentScript.every((item: any) => item.participantId === 'participant' || item.participantId === 'onebot:bot:222'))
+  assert.ok(payloadMixed.relevantEstablishedEpisodes.recentScript.every((item: any) => item.participantId === 'participant' || item.participantId === 'onebot:bot:222'))
 })
 
 test('the ownership legend matches the payload mode', () => {
@@ -154,28 +158,27 @@ test('the ownership legend matches the payload mode', () => {
   assert.match(compact, /protagonist\(action\)/)
 })
 
-test('workingDetails, recalledHistory and previousScenes ride the payload in the right zones', () => {
+test('workingDetails, recalledScript and previousScenes ride the payload in the right zones', () => {
   const req = request([entry(1, 'user-message', '在吗', 5)], '在吗', {
     workingDetails: [{ label: '奶茶取餐码', value: '8914', expiresAt: new Date(now.getTime() + 3_600_000).toISOString(), createdAt: now.toISOString() }],
     recalledHistory: [{ id: 99, occurredAt: '2026-08-30T10:00:00.000Z', content: '拿到了。确实挺大杯。' }],
     sceneContext: { scene: null, arc: null, previousScenes: [{ startedAt: '2026-08-30T09:00:00.000Z', endedAt: '2026-08-30T10:30:00.000Z', summary: '上一场景摘要' }] },
   })
   const legacy = toPromptPayload(req) as any
-  assert.equal(legacy.workingDetails[0].value, '8914')
-  assert.equal(legacy.recalledHistory[0].id, 99)
-  assert.equal(legacy.sceneContext.previousScenes[0].summary, '上一场景摘要')
+  assert.equal(legacy.ongoingThreads.workingDetails[0].value, '8914')
+  assert.equal(legacy.relevantEstablishedEpisodes.recalledScript[0].id, 99)
+  assert.equal(legacy.relevantEstablishedEpisodes.sceneContext.previousScenes[0].summary, '上一场景摘要')
   const cache = toPromptPayload(req, { cacheFirst: true }) as any
-  const keys = Object.keys(cache)
-  assert.equal(keys[keys.length - 2], 'currentEvent')
-  assert.ok(keys.indexOf('workingDetails') < keys.indexOf('currentParticipant'), 'workingDetails 属于缓存稳定区')
-  assert.ok(keys.indexOf('recalledHistory') > keys.indexOf('interval'), 'recalledHistory 属于每轮变化区')
+  assert.equal(cache.ongoingThreads.workingDetails[0].value, '8914')
+  assert.equal(cache.relevantEstablishedEpisodes.recalledScript[0].id, 99)
+  assert.equal(cache.incomingEvent.event.content, '在吗')
 })
 
 test('the fixed contract documents the three memory blocks', () => {
   const prompt = systemPrompt('user-message', '', '', '', '', '')
   assert.match(prompt, /previousScenes, when supplied/)
   assert.match(prompt, /workingDetails, when supplied/)
-  assert.match(prompt, /recalledHistory, when supplied/)
+  assert.match(prompt, /recalledScript, when supplied/)
 })
 
 test('the fixed contract explains recentExchange only for cache-first payloads', () => {

@@ -19,3 +19,9 @@ credentials.*
 *.p12
 *.pfx
 .DS_Store
+
+# Local-only recovery and forensic material. Current source, docs and release
+# artifacts remain visible; archived snapshots never enter a publishable tree.
+backup/
+dustbin/
+release/smoke-*/

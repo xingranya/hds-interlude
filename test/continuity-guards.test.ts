@@ -44,8 +44,8 @@ test('scene presence accepts explicit arrival/departure evidence and rejects inf
 test('automatic delivery summaries stay on background turns only', () => {
   const advance = toPromptPayload(request('advance')) as Record<string, any>
   const user = toPromptPayload(request('user-message')) as Record<string, any>
-  assert.equal(advance.automaticDeliverySummaries.length, 1)
-  assert.equal(advance.state.automaticDeliverySummaries, undefined)
-  assert.equal(user.automaticDeliverySummaries, undefined)
-  assert.equal(user.state.automaticDeliverySummaries, undefined)
+  assert.equal(advance.ongoingThreads.automaticDeliverySummaries.length, 1)
+  assert.equal(advance.ongoingThreads.state.automaticDeliverySummaries, undefined)
+  assert.equal(user.ongoingThreads.automaticDeliverySummaries, undefined)
+  assert.equal(user.ongoingThreads.state.automaticDeliverySummaries, undefined)
 })

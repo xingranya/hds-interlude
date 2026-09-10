@@ -1,17 +1,18 @@
 import { Context, Schema, Session } from 'koishi'
-import { CompactionConfig, EmbeddingConfig, FailoverConfig, ModelConfig, ProviderConfig, VisionConfig } from './narrator'
+import { AudioConfig, CompactionConfig, EmbeddingConfig, FailoverConfig, ModelConfig, ProviderConfig, VisionConfig } from './narrator'
 import { BlindModeConfig, BrowserConfig, ChatActionsConfig, Config as InterludeConfig, extractSessionVoiceCount, GroupChatRule, InterludeService, LoggingConfig, MemoryConfig, OneBotAccountRule, OneBotNapCatConfig, RestWindow, RuntimeConfig, SharedStoryConfig, StickerLibraryConfig, StoryDefaults } from './service'
-import { AgencyConfig, AlterSystemConfig, ChatReactionName, NativeFaceSemantic, StorySetting } from './types'
+import { AgencyConfig, AlterSystemConfig, ChatReactionName, ChatRhythmConfig, NativeFaceSemantic, StorySetting } from './types'
 import { HDS_INTERLUDE_VERSION } from './meta'
 import { GroupWillingnessConfig } from './group-willingness'
 import { resolveSchedulePreplanConfig, SchedulePreplanConfig, schedulePreplanWindow } from './schedule-preplan'
 import { formatLogTime, formatStoryDisplayTime } from './time'
+import { installDesktopBridge } from './desktop-bridge'
 
 declare module 'koishi' { interface Context { interlude: InterludeService } }
 
 export const name = 'hds-interlude'
 export const version = HDS_INTERLUDE_VERSION
-export const inject = { required: ['database', 'http'], optional: ['puppeteer'] }
+export const inject = { required: ['database', 'http'], optional: ['puppeteer', 'server'] }
 
 const defaultProvider: ProviderConfig = {
   id: 'primary',
@@ -131,8 +132,16 @@ const Vision: Schema<VisionConfig> = Schema.object({
   maxImageDimension: Schema.union([0, 512, 768, 1024]).default(1024).description('图片最长边；0 使用原图。'),
 }).collapse(true)
 
+const AudioUnderstanding: Schema<AudioConfig> = Schema.object({
+  enabled: Schema.boolean().default(false).description('启用语音/音频原生理解。要求主模型支持音频输入（如 Gemini）；语音由 SnowLuma 服务端转码后作为原生音频直传主模型，不做文本转写。'),
+  outFormat: Schema.union(['mp3', 'wav', 'ogg', 'm4a', 'flac', 'amr']).default('mp3').description('SnowLuma 服务端转码格式；QQ 语音为 SILK，必须转码后模型才能读取，mp3 兼容性最好。'),
+  maxFileSizeMB: Schema.natural().min(1).max(25).default(10).description('单条音频附件上限（MB）；超出则跳过该附件并保留“用户发送了语音”的事实。'),
+  maxPerMessage: Schema.natural().min(1).max(3).default(1).description('每个事件接受的音频附件数上限。'),
+}).collapse(true)
+
 const Model: Schema<ModelConfig> = Schema.object({
   vision: Vision.default({ enabled: false, mode: 'native', detail: 'auto', maxImageDimension: 1024 }).description('图片理解设置。'),
+  audio: AudioUnderstanding.default({ enabled: false, outFormat: 'mp3', maxFileSizeMB: 10, maxPerMessage: 1 }).description('语音/音频理解设置。'),
   providers: Schema.array(Provider.collapse(true)).default([defaultProvider]).description('新增连接后填写 Key、模型名，再勾选用途。'),
   mainTemperature: Schema.number().min(0).max(2).default(0.8).description('主叙事采样温度。'),
   mainTopP: Schema.number().min(0).max(1).default(1).description('主叙事 top-p。'),
@@ -148,6 +157,7 @@ const Model: Schema<ModelConfig> = Schema.object({
   stylePrompt: Schema.string().role('textarea').default('Use restrained, realistic prose with concrete daily details, natural pauses, and no forced drama.').description('全局叙事文风；故事级 style 可进一步覆盖。'),
   embedding: (Schema.object({
     enabled: Schema.boolean().default(false).description('启用长期事实的语义检索。模型由上方“用作 Embedding 模型”用途开关选择。'),
+    semanticHistory: Schema.boolean().default(false).description('启用历史语义召回。'),
     liveQuery: Schema.boolean().default(false).description('是否在每次实时对话中额外请求 Embedding 做语义检索。关闭可减少一次网络请求、降低回复延迟；后台向量补齐不受影响。'),
     endpoint: Schema.string().default('').description('Embedding 完整地址；留空时从所选模型连接的 Chat 地址推导。'),
     dimensions: Schema.natural().min(0).max(32_768).default(0).description('向量维度；0 表示由服务商决定。'),
@@ -155,8 +165,7 @@ const Model: Schema<ModelConfig> = Schema.object({
     maxInputCharacters: Schema.natural().min(100).max(32_000).default(4_000).description('单条事实送入 Embedding 的最大字符数。'),
     backfillBatchSize: Schema.natural().min(0).max(100).default(5).description('每轮后台补齐旧事实的数量。'),
     semanticStickerFilter: Schema.boolean().default(true).description('启用贴纸目录语义过滤：按当前消息的向量相似度只注入最相关的 12 条贴纸描述，降低每轮 token 开销。需要一条勾选“用作 Embedding 模型”的连接；不可用或素材尚未建立向量时自动回退全量目录。'),
-    semanticHistory: Schema.boolean().default(false).description('启用历史语义召回：将剧本条目向量化（后台逐步覆盖全表，最新优先），每轮按当前消息检索最相关的 3 条旧片段注入“回忆块”。开启后每次实时对话多一次向量请求；建议同时勾选“用作 Embedding 模型”。'),
-  }) as unknown as Schema<EmbeddingConfig>).default({ enabled: false, modelId: '', providerId: '', endpoint: '', model: '', dimensions: 0, timeout: 10_000, maxInputCharacters: 4_000, backfillBatchSize: 5, semanticStickerFilter: true }).description('高级：长期事实的语义召回设置。通常只需开启功能并在模型连接中勾选 Embedding 用途。').collapse(true),
+  }) as unknown as Schema<EmbeddingConfig>).default({ enabled: false, liveQuery: false, semanticHistory: false, modelId: '', providerId: '', endpoint: '', model: '', dimensions: 0, timeout: 10_000, maxInputCharacters: 4_000, backfillBatchSize: 5, semanticStickerFilter: true }).description('Embedding 与历史语义召回。先配置 Embedding 连接，再按需开启历史召回。'),
   compaction: (Schema.object({
     enabled: Schema.boolean().default(true).description('启用后台剧本压缩与长期事实提取。'),
     temperature: Schema.number().min(0).max(2).default(0.3).description('压缩采样温度；建议保持较低以提高稳定性。'),
@@ -236,6 +245,14 @@ const Agency: Schema<AgencyConfig> = Schema.object({
   minimumProactiveIntervalMinutes: Schema.natural().min(0).max(10_080).default(60).description('同一参与者两次普通主动联系之间的安全间隔；承诺型联系可以绕过。'),
   maxCandidateHours: Schema.natural().min(1).max(168).default(24).description('生活产生的主动联系候选最长保留时间；过期后自然放下。'),
 }).collapse(true)
+
+const ChatRhythm: Schema<ChatRhythmConfig> = Schema.object({
+  enabled: Schema.boolean().default(true).description('启用聊天节奏反定型：检测主角回复结构的定型，并以主角视角的描写召唤她本来的节奏多样性。'),
+  mode: Schema.union(['gentle', 'balanced', 'aggressive']).default('balanced').description('检测档位。gentle：仅结构完全同构时判定；balanced：增加尾段语气复读与字数箱体两条判据；aggressive：收紧样本要求，更早触发。'),
+  historyLimit: Schema.natural().min(5).max(20).default(12).description('节奏签名的历史窗口轮数。'),
+  collapseMinSamples: Schema.natural().min(3).max(10).default(5).description('开始判定定型所需的最少样本轮数（宽限期）。档位不同时有各自默认值，手动填写后以手填为准。'),
+  exhaustLimit: Schema.natural().min(3).max(12).default(6).description('连续跟随失败的熔断轮数；熔断后停止注入，直到重置或更换主叙事模型。'),
+}).description('聊天节奏反定型设置。')
 
 const AlterSystem: Schema<AlterSystemConfig> = Schema.object({
   enabled: Schema.boolean().default(true).description('启用情绪偏移追踪。它只增加临时氛围参考，不替代 recentScript、continuity 或稳定设定。'),
@@ -382,18 +399,12 @@ const GroupChatRuleSchema: Schema<GroupChatRule> = (Schema.object({
   willingness: GroupWillingness.default({ enabled: false, maxScore: 1, threshold: 0.24, probabilityAmplifier: 1.3, decayHalfLifeSeconds: 180, replyCost: 0.55, baseGain: 0.12, quoteGain: 0.12, keywordGain: 0.18, keywords: [] }).description('群聊本地意愿门；@ 机器人直接通过。'),
 }) as unknown as Schema<GroupChatRule>).collapse(true)
 
-const VoiceTranscription: Schema<import('./service').VoiceTranscriptionConfig> = Schema.object({
-  enabled: Schema.boolean().default(false).description('启用 SnowLuma 私聊语音转写。默认关闭。'),
-  timeoutMs: Schema.natural().min(1_000).max(60_000).default(20_000).role('ms').description('单条语音转写等待上限。'),
-}).collapse(true)
-
 const OneBot: Schema<OneBotNapCatConfig> = Schema.object({
-  enabled: Schema.boolean().default(true).description('启用 OneBot/NapCat 账号过滤。'),
+  enabled: Schema.boolean().default(false).description('启用 OneBot/NapCat 账号过滤。默认关闭：未配置时沿用旧行为（不过滤）；启用后空白名单拒绝全部，须同时配置机器人/用户白名单。'),
   botAccounts: Schema.array(OneBotBotAccount).role('table').default([]).description('机器人账号白名单；空表拒绝全部账号。'),
   userAccounts: Schema.array(OneBotUserAccount).default([]).description('用户白名单与初始关系；空表拒绝全部私聊。'),
   groupChats: Schema.array(GroupChatRuleSchema).default([]).description('群聊白名单与角色定位。'),
   ignoreSelfMessages: Schema.boolean().default(true).description('忽略机器人自身产生的消息事件。'),
-  voiceTranscription: VoiceTranscription.default({ enabled: false, timeoutMs: 20_000 }).description('SnowLuma 语音转写：仅处理当前私聊 record 语音，并以文本形式进入现有剧本流程。'),
 })
 
 const ChatActions: Schema<ChatActionsConfig> = Schema.object({
@@ -416,6 +427,7 @@ const Stickers: Schema<StickerLibraryConfig> = Schema.object({
   directory: Schema.path({ allowCreate: true, filters: ['directory'] }).default('data/hds-interlude/stickers').description('本地表情包根目录；一级子文件夹会成为素材分组。'),
   maxFileSizeMB: Schema.natural().min(1).max(30).default(10).description('单个表情包允许扫描的最大体积，单位 MB。'),
   catalogLimit: Schema.natural().min(1).max(80).default(40).description('单次主模型最多读取多少条表情包描述。'),
+  descriptionMaxTokens: Schema.natural().min(256).max(4_096).default(768).description('单张表情包描述的最大输出 token。'),
   descriptionResponseFormat: Schema.union(['json-object', 'prompt-only']).default('json-object').description('表情包描述输出格式。'),
 }).collapse(true)
 
@@ -428,21 +440,47 @@ const SharedStory: Schema<SharedStoryConfig> = Schema.object({
   managerAccounts: Schema.array(Schema.string()).role('table').default([]).description('可执行管理命令的 QQ；留空表示所有已授权用户。'),
 }).collapse(true)
 
+const UrgeAdvanced = Schema.object({
+  hotMin: Schema.number().min(1).max(1440).description('密聊最短等待（分钟）；留空按档位。'),
+  hotMax: Schema.number().min(1).max(1440).description('密聊最长等待（分钟）。'),
+  idleMin: Schema.number().min(1).max(1440).description('安静期最短等待（分钟）。'),
+  idleMax: Schema.number().min(1).max(1440).description('安静期最长等待（分钟）。'),
+  burstMin: Schema.number().min(1).max(1440).description('加速首轮最短等待（分钟）；以后逐步翻倍。'),
+  burstMax: Schema.number().min(1).max(1440).description('加速首轮最长等待（分钟）。'),
+  slowMin: Schema.number().min(1).max(1440).description('剧本 slow 最短等待（分钟）。'),
+  slowMax: Schema.number().min(1).max(1440).description('剧本 slow 最长等待（分钟）。'),
+  halfLifeMinutes: Schema.number().min(5).max(240).default(45).description('真实对话热度半衰期（分钟）。'),
+  burstThreshold: Schema.number().min(0).max(1).step(.05).default(.75).description('启动加速的有效 Urge；仍需主动行动和发送回执。'),
+  jitter: Schema.number().min(0).max(1).step(.05).default(.15).description('Urge 值随机偏移幅度，不改变联系意愿。'),
+  extremeChance: Schema.number().min(0).max(1).step(.01).default(.03).description('改为全区间抽样的概率；0 关闭。'),
+  burstTtlMinutes: Schema.number().min(5).max(120).default(35).description('同一联系加速段有效期（分钟），不会自行续满。'),
+  burstBudget: Schema.natural().max(10).default(3).description('一段最多额外推进次数；0 关闭加速。'),
+  burstContactMinMinutes: Schema.number().min(1).max(60).default(5).description('有效加速段中本对象的最短联系间隔，其他 Agency 条件保留。'),
+}).collapse(true)
+
 export const Config: Schema<InterludeConfig> = Schema.object({
-  blindMode: BlindMode,
-  storyDefaults: StoryDefaults.description('1. 剧本起点：主角、世界、默认关系、地点、时区和叙事风格。'),
-  model: Model.description('2. 模型中心：先添加连接并勾选用途；主叙事参数和高级模块保持在同一处。'),
-  onebot: OneBot.description('3. 接入与对象：机器人账号、私聊白名单、群聊与语音。'),
-  runtime: Runtime.description('4. 对话节奏：消息合并、打字、失败重试与自动生活推进。'),
-  schedulePreplan: SchedulePreplan.description('5. Schedule Preplan：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
-  sharedStory: SharedStory.description('6. 高级共享：参与者、跨账号行为和管理员权限。'),
-  chatActions: ChatActions.default({ enabled: false, platforms: ['qq'], quoteReply: true, messageReactions: true, allowedReactions: ['like', 'smile', 'laugh', 'heart'], nativeFaces: true, expressionThreshold: 0.7, allowedNativeFaces: ['smile', 'laugh', 'sweat', 'awkward'] }).description('7. 可选聊天动作：引用回复、贴反应与 QQ 原生表情。'),
-  stickers: Stickers.default({ enabled: false, directory: 'data/hds-interlude/stickers', maxFileSizeMB: 10, catalogLimit: 40 }).description('8. 可选本地表情包：启用后扫描素材，并由视觉模型建立描述。'),
-  agency: Agency.description('9. 高级主动性：日程压力、隐私、设备和生活来源的联系条件。'),
-  memory: Memory.description('10. 高级连续性：场景压缩、事实召回、剧情余波和设定演化。'),
-  alterSystem: AlterSystem.description('11. 高级 Alter：低频氛围偏移、动态阈值、权重和侧端分析。'),
-  browser: Browser.description('12. 可选网页观察：Puppeteer 只读浏览与安全边界。'),
-  logging: Logging.description('13. 高级日志：级别、信息密度、布局和隐私预览。'),
+  storyDefaults: StoryDefaults.description('【必填 1】故事档案：主角、世界、默认关系、地点、时区与叙事风格。'),
+  model: Model.description('【必填 2】模型中心：先添加连接并勾选用途；主叙事参数与高级模块保持在同一处。'),
+  onebot: OneBot.description('【必填 3】QQ 接入：机器人账号、私聊白名单、群聊与语音。'),
+  sharedStory: SharedStory.description('【结构 4】共享主剧本：多人参与、跨账号行为与管理员权限。'),
+  runtime: Runtime.description('【节奏 5】运行时：消息合并、打字、失败重试与自动生活推进。'),
+  urge: Schema.object({
+    enabled: Schema.boolean().default(false).description('启用弹性推进，替代固定间隔及对话后 10/20 分钟补写；不改变剧本文本。总自动推进开关仍优先。'),
+    frequency: Schema.union(['low', 'medium', 'high', 'custom']).default('medium').description('低/中/高频或自定义；自定义未填写项沿用中频。高频会增加主叙事和时间导演调用。'),
+    proactiveWillingnessThreshold: Schema.number().min(0).max(1).step(.05).default(.4).description('仅 Urge 启用时的主动联系意愿门槛；不是发送概率。'),
+    advanced: UrgeAdvanced.description('高级时间范围、随机性与调用预算；填写时间覆盖档位。'),
+  }).description('【节奏 6】Urge 弹性推进：剧本驱动的自动调度（可选，替代固定间隔）。'),
+  schedulePreplan: SchedulePreplan.description('【节奏 7】日程预排：近期稳定日程与变化颗粒度；主提示词只读取未来约半天。'),
+  timelineDirector: Schema.object({ enabled: Schema.boolean().default(true).description('启用时间导演：自动回合先生成相对时间账本——只提供客观时间事实与可能的时间逻辑，不做笃定的未来预测（如几点起床）；用户消息对主角的影响由主模型判断。失败时降级为无账本推进，不冻结自动推进。'), }).description('【节奏 8】时间导演：自动回合的时间账本与熔断保护。'),
+  agency: Agency.description('【节奏 9】Agency 行动窗口：日程压力、隐私、设备和生活来源的联系条件。'),
+  chatActions: ChatActions.default({ enabled: false, platforms: ['qq'], quoteReply: true, messageReactions: true, allowedReactions: ['like', 'smile', 'laugh', 'heart'], nativeFaces: true, expressionThreshold: 0.7, allowedNativeFaces: ['smile', 'laugh', 'sweat', 'awkward'] }).description('【表达 10】聊天动作：引用回复、贴反应与 QQ 原生表情。'),
+  stickers: Stickers.default({ enabled: false, directory: 'data/hds-interlude/stickers', maxFileSizeMB: 10, catalogLimit: 40 }).description('【表达 11】本地表情包：启用后扫描素材，并由视觉模型建立描述。'),
+  memory: Memory.description('【内在 12】记忆与连续性：场景压缩、事实召回、剧情余波和设定演化。'),
+  alterSystem: AlterSystem.description('【内在 13】Alter 情绪：低频氛围偏移、动态阈值、权重和侧端分析。'),
+  browser: Browser.description('【扩展 14】网页观察：Puppeteer 只读浏览与安全边界。'),
+  blindMode: BlindMode.description('【维护 15】盲区模式：低频心跳的最小运行形态。'),
+  logging: Logging.description('【维护 16】日志：级别、信息密度、布局和隐私预览。'),
+  chatRhythm: ChatRhythm.description('【已弃用】对话节奏：仅兼容旧配置，不再统计、干预写作或重试。').hidden(),
 })
 
 export function apply(ctx: Context, config: InterludeConfig) {
@@ -450,6 +488,10 @@ export function apply(ctx: Context, config: InterludeConfig) {
   const blindModeEnabled = config.blindMode?.enabled === true || config.blackBox?.enabled === true
   if (!blindModeEnabled) startupLogger.info('plugin load started version=%s', HDS_INTERLUDE_VERSION)
   const service = new InterludeService(ctx, config)
+  // typ-0 worker-only integration. The bridge is environment-gated and does
+  // not register any Console field or change ordinary Koishi behaviour.
+  const disposeDesktopBridge = installDesktopBridge(service)
+  if (disposeDesktopBridge) ctx.on('dispose', disposeDesktopBridge)
   if (blindModeEnabled) {
     // Registered commands from every plugin reach this hook before their
     // action runs. Returning an empty fragment consumes them silently.
@@ -481,7 +523,11 @@ function registerCommands(ctx: Context, service: InterludeService, config: Inter
   const startStoryFromConsole = async (session: Session, legacyName?: string) => {
     if (!requireManager(service, session)) return '无权限：手动启动共享主剧本需要 HDSI 管理员权限。'
     const readiness = await service.storyStartReadiness(session)
-    if (readiness.existing) return `当前已有 ${readiness.existing.setting.character.name} 的活动主剧本；请使用 interlude.status 查看状态。`
+    if (readiness.existing) {
+      return readiness.existing.status === 'paused'
+        ? `当前已有 ${readiness.existing.setting.character.name} 的主剧本（暂停中）；请使用 interlude.resume 恢复，不要重复启动。`
+        : `当前已有 ${readiness.existing.setting.character.name} 的活动主剧本；请使用 interlude.status 查看状态。`
+    }
     if (!readiness.ready) return formatStoryStartReadiness(readiness, 'Console 档案尚未适合启动')
     const preview = readiness.preview
     const legacyNote = legacyName?.trim() ? `\n已忽略旧 init 的名称参数“${legacyName.trim()}”；角色名称以 Console 为准。` : ''

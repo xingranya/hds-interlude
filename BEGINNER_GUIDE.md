@@ -1,6 +1,6 @@
 # HDS Interlude 新手引导
 
-适用版本：`0.1.4`
+适用版本：`1.0.1-beta6-rebuild`
 
 HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧本保存角色状态、关系分支、已发生事件、待处理计划和长期记忆。用户消息会进入当前活动场景；主模型在同一次请求中续写已经发生的生活，并决定是否发送、延迟发送或暂不发送消息。实时写作读取一条按时间排序的活动场景记录：最近剧本文字、真实用户消息和已经成功投递的角色消息在同一条线上。剧本引子、场景外近期事实和长期记忆负责更早的历史。
 
@@ -15,7 +15,7 @@ HDS Interlude 是 Koishi 的持续叙事聊天插件。插件使用共享主剧�
 
 1. 在 Koishi Console 启用 `hds-interlude`。
 2. 在“模型与服务商”中添加一行模型连接，选择对应的 `mode`，填写该模式需要的连接信息，并勾选 `useForMain`。
-3. 在“剧本起点”中填写主角资料、默认关系、世界设定、地点、时区和叙事风格。
+3. 在“故事档案”中填写主角资料、默认关系、世界设定、地点、时区和叙事风格。
 4. 使用 OneBot/NapCat 时，在 `onebot.botAccounts` 填写机器人 QQ；在 `onebot.userAccounts` 逐项填写允许私聊的测试 QQ、人物资料和初始关系。
 5. 保存配置后，在已授权私聊中执行：
 
@@ -24,7 +24,7 @@ interlude.doctor
 interlude.story.start
 ```
 
-Console 页面建议按以下顺序填写：`blindMode`（首次保持关闭）→ `storyDefaults` → `model` → `onebot` → `chatActions` → `stickers` → `sharedStory` → `runtime` → `schedulePreplan` → `agency` → `memory` → `alterSystem`。首次测试先完成模型、剧本起点和账号权限；网页观察、Embedding、详细日志与失明模式可以之后再开。
+Console 配置页已按【必填→结构→节奏→表达→内在→扩展→维护】分组编号：先完成必填三项（故事档案 → 模型中心 → QQ 接入），再按需开启共享主剧本与节奏类（运行时/Urge/日程预排/时间导演/行动窗口）；表达（聊天动作/表情包）、内在（记忆/Alter）、扩展与维护项在基础私聊稳定后逐项开启。`blindMode`（盲区模式）首次保持关闭。
 
 6. 发送一条普通消息，确认模型调用、日志和消息投递正常。
 
@@ -125,7 +125,7 @@ model.compaction.fixedPrompt: ''
 model.compaction.stylePrompt: 按时间顺序陈述事实，表达简洁具体，优先保留对后续行动、关系和场景状态仍有影响的细节。
 ```
 
-### 2. 剧本起点
+### 2. 故事档案（【必填 1】）
 
 ```yaml
 storyDefaults.characterName: Minase HDSI
@@ -233,7 +233,7 @@ browser.enabled: false
 browser.mode: deferred-only
 ```
 
-实时写作会从数据库中读取受条数和字符预算限制的近期原始剧本，并配合 continuitySnapshot、长期事实、活动场景摘要和待处理意图。当前用户事件只出现一次；自动推进不会把历史消息误认为刚刚到达的新消息。
+实时写作读取受条数和字符预算限制的近期原始剧本，并配合长期事实、场景/剧情弧索引和待处理意图。beta6 不再重复生成实时 continuitySnapshot；局部活动通过原文引用交接，真实通信通过执行结果确认。历史消息标为过去，当前用户事件具有独立来源；实际模型是否误读仍需实机观察。
 
 Embedding 可以在基础功能稳定后再开启。网页观察和 Puppeteer 也建议最后启用，以便区分模型、网络和浏览器问题。
 

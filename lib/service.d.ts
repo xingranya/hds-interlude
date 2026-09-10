@@ -1,8 +1,49 @@
 import { Context, Service, Session } from 'koishi';
+import { UrgeConfig } from './urge';
 import { ModelConfig } from './narrator';
 import { GroupWillingnessConfig } from './group-willingness';
 import { SchedulePreplanConfig } from './schedule-preplan';
-import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ScriptEntry, StatePatchProposal, StorySetting, StoryState, OverlaySnapshot, AlterSystemConfig, AgencyConfig, ScenePresenceState, ChatActionCapabilities, ChatReactionName, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
+import { InterludeArc, InterludeScene, InterludeParticipant, InterludeStory, NarrativeDecision, NarrativeFact, NarrativeIntent, GroupContext, NarrativeInteraction, NarrativeProvider, NarrativeRequest, NarrativeCompactor, NarrativeEmbedder, OutgoingMessageDraft, ScriptEntry, StatePatchProposal, StorySetting, StoryState, OverlaySnapshot, AlterSystemConfig, ChatRhythmConfig, AgencyConfig, ScenePresenceState, ChatActionCapabilities, ChatReactionName, MessageReactionDraft, NativeFaceSemantic, QuotedMessageContext, SchedulePreplanRecord, TimelinePlan, UserReportedTime } from './types';
+import type { DesktopInboundEvent, DesktopRuntimePhase } from './desktop-bridge';
+export type DesktopTimelineTrack = 'script' | 'messages' | 'system' | 'scenes' | 'facts' | 'preplan';
+export interface DesktopTimelineRangeRequest {
+    from?: string;
+    to?: string;
+    tracks?: DesktopTimelineTrack[];
+    /** Opaque oldest-entry cursor returned by the preceding response. */
+    cursor?: string;
+    detailLevel?: 'summary' | 'full';
+    limit?: number;
+}
+export declare function desktopTimelineEntryView(entry: ScriptEntry): {
+    sceneCheckpoint?: {
+        boundarySourceEntryIds?: number[];
+        lastEntryId?: number;
+        firstEntryId?: number;
+        reason?: string;
+        endedAt?: string;
+        sceneId: number;
+        startedAt: string;
+    };
+    deliveryActions?: {
+        eventId: string;
+        eventKind: any;
+        status: any;
+        segments: any;
+    }[];
+    commitId?: string;
+    entityId: string;
+    id: number;
+    storyId: string;
+    participantId: string;
+    kind: string;
+    actor: string;
+    track: DesktopTimelineTrack;
+    content: string;
+    occurredAt: string;
+    startedAt: string;
+    endedAt: string;
+};
 /** Semantic recall is another view of raw history, so it must obey the same
  * private-branch boundary as recentScript. Group transcripts are deliberately
  * excluded from a private turn unless the owner opted into shared details. */
@@ -30,7 +71,13 @@ export interface Config {
     chatActions?: ChatActionsConfig;
     stickers?: StickerLibraryConfig;
     alterSystem?: AlterSystemConfig;
+    chatRhythm?: ChatRhythmConfig;
+    /** Timeline director for automatic windows; off = automatic turns run without a ledger. */
+    timelineDirector?: {
+        enabled: boolean;
+    };
     agency?: AgencyConfig;
+    urge?: UrgeConfig;
     schedulePreplan?: SchedulePreplanConfig;
 }
 export interface BlindModeConfig {
@@ -61,12 +108,6 @@ export interface OneBotNapCatConfig {
     groupChats?: GroupChatRule[];
     /** Prevent an echoed self-message from entering the narrative. */
     ignoreSelfMessages: boolean;
-    /** Optional SnowLuma record-to-text bridge for incoming private QQ voice messages. */
-    voiceTranscription?: VoiceTranscriptionConfig;
-}
-export interface VoiceTranscriptionConfig {
-    enabled: boolean;
-    timeoutMs: number;
 }
 export interface ChatActionsConfig {
     enabled: boolean;
@@ -83,6 +124,7 @@ export interface StickerLibraryConfig {
     directory: string;
     maxFileSizeMB: number;
     catalogLimit: number;
+    descriptionMaxTokens?: number;
     /** API JSON mode is optional; prompt-only still asks for the compact JSON contract. */
     descriptionResponseFormat?: 'json-object' | 'prompt-only';
 }
@@ -316,8 +358,18 @@ export declare class InterludeService extends Service {
      * by the background backfill; never persisted. */
     private historyVectors;
     private historyVectorsReady;
+    private historyVectorLoads;
+    private historyBackfills;
+    private historyBackoff;
+    private automaticRecallCache;
     /** Per-story retry-after timestamps for failed Schedule Preplan generations. */
     private schedulePreplanBackoff;
+    /** Per-story retry-after timestamps for a failed automatic timeline window. */
+    private timelineBackoff;
+    /** Consecutive timeline-director failures per story; drives exponential backoff and the fuse. */
+    private timelineDirectorFailures;
+    /** Per-story guard for a failed/partially persisted scene compaction. */
+    private compactionBackoff;
     private stickerById;
     private stickerScanRunning;
     /**
@@ -358,7 +410,7 @@ export declare class InterludeService extends Service {
     private blindModeHealthIssue;
     /** Console reload creates a new service instance, so normalized config can
      * be cached safely for the lifetime of this instance. */
-    private cachedVoiceTranscriptionConfig?;
+    private cachedAudioConfig?;
     private cachedStickerConfig?;
     private cachedAlterSystemConfig?;
     private cachedAgencyConfig?;
@@ -368,6 +420,18 @@ export declare class InterludeService extends Service {
     private cachedSharedStoryConfig?;
     private cachedMemoryConfig?;
     private cachedBrowserConfig?;
+    private readonly modelRouting;
+    /** Migration diagnostics are emitted once per story without changing Canon. */
+    private reportedStateMigrations;
+    /** typ-0 uses this optional gate only inside a dedicated worker process. */
+    private desktopRuntimePhase;
+    private desktopEventSink?;
+    /**
+     * typ-0 后台投递出口：delayed/split/advance 路径没有实时 Session，普通 Koishi
+     * 里由 findBotForParticipant 走 adapter；typ-0 worker 中 bot 不存在，所有后台
+     * 消息只能经宿主渠道投递。bridge 安装时注册，普通 Koishi 永远为空。
+     */
+    private desktopDeliveryHandler?;
     constructor(ctx: Context, config: Config);
     private startBackgroundTasks;
     setNarrator(provider: NarrativeProvider): void;
@@ -375,6 +439,170 @@ export declare class InterludeService extends Service {
     setCompactor(provider: NarrativeCompactor): void;
     /** Allows a custom/local vector service without replacing the main narrator. */
     setEmbedder(provider: NarrativeEmbedder): void;
+    /** Optional typ-0 bridge hook. No sink is installed in normal Koishi use. */
+    setDesktopEventSink(sink?: (event: string, payload: unknown) => void): void;
+    /** typ-0 bridge 在安装时注册后台投递通道；卸载时传 undefined 复原。 */
+    setDesktopDeliveryHandler(handler?: InterludeService['desktopDeliveryHandler']): void;
+    getDesktopRuntimePhase(): DesktopRuntimePhase;
+    setDesktopRuntimePhase(phase: DesktopRuntimePhase): Promise<void>;
+    /** Snapshot is intentionally small; detailed timeline uses desktopTimelineSnapshot below. */
+    desktopRuntimeSnapshot(): Promise<{
+        phase: DesktopRuntimePhase;
+        stories: {
+            id: string;
+            status: import("./types").StoryStatus;
+            cursorAt: string;
+            updatedAt: string;
+        }[];
+    }>;
+    /** Read-only desktop projection. The host never opens or mutates HDSI tables directly. */
+    desktopTimelineSnapshot(): Promise<{
+        storyId: string;
+        entries: any[];
+        scenes: any[];
+        facts: any[];
+        cursorAt?: undefined;
+        updatedAt?: undefined;
+        timezone?: undefined;
+        preplan?: undefined;
+    } | {
+        storyId: any;
+        cursorAt: any;
+        updatedAt: any;
+        timezone: any;
+        entries: {
+            id: number;
+            storyId: string;
+            participantId: string;
+            kind: string;
+            actor: string;
+            content: string;
+            occurredAt: string;
+            metadata: Record<string, unknown>;
+        }[];
+        scenes: {
+            id: number;
+            status: import("./types").SceneStatus;
+            startedAt: string;
+            endedAt: string;
+            hook: string;
+            summary: string;
+            entryCount: number;
+        }[];
+        facts: {
+            id: number;
+            scope: "character" | "world" | "relationship" | "event" | "promise";
+            content: string;
+            importance: number;
+            confidence: number;
+            unresolved: boolean;
+            updatedAt: string;
+        }[];
+        preplan: {
+            revision: number;
+            timezone: string;
+            validFrom: string;
+            validThrough: string;
+            materializedDays: import("./types").SchedulePreplanDay[];
+        };
+    }>;
+    /**
+     * typ-0 选区删除的受控入口：QQ 指令路径有人工确认间隔，bridge 路径没有，
+     * 因此 purge 必须在 worker 内的 serial 队列中执行，保证与写作回合互斥。
+     * purgeStoryRange 本身是软删（redacted/deleted/superseded）并处理
+     * sourceEntryIds 级联；Canon 与参与者身份保持不动。
+     */
+    desktopPurgeRange(from: Date, to: Date): Promise<{
+        storyId: any;
+    }>;
+    /**
+     * Versioned, bounded read model for typ-0 Arrangement.  It deliberately
+     * exposes HDSI's stored temporal facts only: callers cannot create timeline
+     * objects, and legacy entries without an explicit automatic window remain
+     * point events instead of receiving a guessed duration from their prose.
+     */
+    desktopTimelineRange(request?: DesktopTimelineRangeRequest): Promise<{
+        protocol: number;
+        storyId: string;
+        revision: string;
+        range: {
+            from: string;
+            to: string;
+        };
+        entries: any[];
+        scenes: any[];
+        facts: any[];
+    } | {
+        protocol: number;
+        storyId: any;
+        revision: string;
+        range: {
+            from: string;
+            to: string;
+        };
+        cursorAt: any;
+        updatedAt: any;
+        timezone: any;
+        entries: {
+            sceneCheckpoint?: {
+                boundarySourceEntryIds?: number[];
+                lastEntryId?: number;
+                firstEntryId?: number;
+                reason?: string;
+                endedAt?: string;
+                sceneId: number;
+                startedAt: string;
+            };
+            deliveryActions?: {
+                eventId: string;
+                eventKind: any;
+                status: any;
+                segments: any;
+            }[];
+            commitId?: string;
+            entityId: string;
+            id: number;
+            storyId: string;
+            participantId: string;
+            kind: string;
+            actor: string;
+            track: DesktopTimelineTrack;
+            content: string;
+            occurredAt: string;
+            startedAt: string;
+            endedAt: string;
+        }[];
+        scenes: {
+            id: number;
+            status: import("./types").SceneStatus;
+            startedAt: string;
+            endedAt: string;
+            hook: string;
+            summary: string;
+            entryCount: number;
+        }[];
+        facts: {
+            id: number;
+            scope: "character" | "world" | "relationship" | "event" | "promise";
+            content: string;
+            importance: number;
+            confidence: number;
+            unresolved: boolean;
+            updatedAt: string;
+        }[];
+        preplan: {
+            revision: any;
+            timezone: any;
+            validFrom: any;
+            validThrough: any;
+            materializedDays: any;
+        };
+        nextCursor: string;
+    }>;
+    /** Accept an already-normalized typ-0 event without introducing a second narrative path. */
+    /** 批次 4：桌面设置叙事游标（分支截断后回拨到 forkPoint）。串行队列内执行。 */
+    setDesktopCursorAt(cursorAt: Date): Promise<void>;
+    receiveDesktopEvent(event: DesktopInboundEvent, session: Session): Promise<boolean>;
     /**
      * Returns whether this session is allowed to use HDSI. Koishi's OneBot
      * adapter uses `selfId` for the logged-in bot QQ and `userId` for the sender
@@ -391,6 +619,9 @@ export declare class InterludeService extends Service {
     /** Background life updates only require the bot account to remain enabled. */
     canHandleStory(story: InterludeStory): boolean;
     findStory(session: Session): Promise<any>;
+    /** Paused stories stay invisible to scheduling but reachable by management
+     * commands. No archiving here: this lookup never resolves conflicts. */
+    private getPausedStory;
     /**
      * Resolve and enforce the one global active story. The preferred id wins
      * when present; otherwise the most recently updated row is retained and
@@ -487,8 +718,8 @@ export declare class InterludeService extends Service {
     purgeStoryRange(storyId: string, from: Date, to: Date): Promise<void>;
     /** Entry point for configured OneBot group chats. Group members do not need
      * private-message authorization; the group allowlist controls access. */
-    receiveGroup(session: Session): Promise<boolean>;
-    receive(session: Session): Promise<boolean>;
+    receiveGroup(session: Session, receivedAt?: Date): Promise<boolean>;
+    receive(session: Session, receivedAt?: Date): Promise<boolean>;
     private groupSenderName;
     private lookupGroupMemberName;
     private bufferGroupMessage;
@@ -514,9 +745,12 @@ export declare class InterludeService extends Service {
      * may leave early. It commits the existing interruption boundary at the
      * same moment as ordinary first-message delivery. */
     private deliverEarlyPrivateReply;
-    /** Extract structured image segments without treating them as a second event. */
-    private get voiceTranscriptionConfig();
+    /** Normalized native-audio understanding config (Console model.audio). */
+    private get audioConfig();
     private get stickerConfig();
+    /** One user event folds typed text, images and voice into a single fact:
+     * attachments ride their own native channels, the stored content keeps a
+     * place-holder fact so history and the desktop timeline stay readable. */
     private describeUserEvent;
     private scanStickerLibrary;
     private refreshStickerCatalog;
@@ -537,11 +771,11 @@ export declare class InterludeService extends Service {
     /** Drop expired scratchpad entries and cap the list; details only ever carry
      * small in-flight facts, so silence is the correct treatment for expiry. */
     private pruneWorkingDetails;
-    /** Semantic recall over the story's whole raw history. Vectors are loaded
-     * once per story into memory and extended incrementally by the backfill;
-     * entries already inside recentScript are excluded by id. */
+    /** Multi-lane recall over the whole immutable script. Embeddings improve the
+     * ranking but are never a prerequisite: literal wording and fact provenance
+     * keep cross-day memory available while vector backfill is incomplete. */
     private recallHistory;
-    /** Load every embedded entry of one story into the recall cache. The load is
+    /** Load every recallable entry of one story into the recall cache. The load is
      * deliberately whole-table (no time window): older memories stay retrievable,
      * and the per-process cache makes the cost one-off per story. */
     private ensureHistoryVectors;
@@ -552,7 +786,12 @@ export declare class InterludeService extends Service {
      * first so live-recall quality ramps up quickly; the whole table is covered
      * gradually over successive maintenance passes. */
     private backfillHistoryEmbeddings;
-    private transcribeVoiceEvent;
+    /** Download voice records as native audio attachments. QQ voice is SILK,
+     * which multimodal models cannot read, so SnowLuma's get_record action is
+     * always asked to transcode server-side (out_format) and return base64.
+     * Mirrors the native-image acquisition path; nothing is persisted. */
+    private loadNativeAudio;
+    private fetchNativeAudio;
     private describeVisionEvent;
     private loadNativeImages;
     /** Sidecar vision mirrors native image acquisition, but sends only its
@@ -602,6 +841,12 @@ export declare class InterludeService extends Service {
      * compaction route first returns a tiny relative-time ledger; if it cannot,
      * preserving the current cursor is safer than writing an ungrounded future. */
     private planAutomaticTimeline;
+    /** 熔断判定：连续失败达到阈值即熔断；熔断有 2h 冷却，到期自动重试一次完整路径。 */
+    private isTimelineDirectorFused;
+    /** Persist the retry gate once per unchanged cursor. The in-memory map is
+     * retained for fast checks inside a live turn, while the story state makes
+     * the guard survive a plugin reload/restart. */
+    private persistTimelineRetry;
     private tryDecide;
     private persistDecision;
     /** Keep the active-scene anchor in sync with the host ledger immediately,
@@ -626,6 +871,7 @@ export declare class InterludeService extends Service {
      * signals instead of replacing them; a failed vector lookup simply has a
      * semantic score of zero for this turn.
      */
+    private contactThreads;
     facts(storyId: string, limit?: number, query?: string, participantId?: string, turnQueryEmbedding?: number[]): Promise<NarrativeFact[]>;
     /** Returns only observations that are safe for this narration branch. A
      * participant's browsing is not shown to another private participant unless
@@ -692,6 +938,11 @@ export declare class InterludeService extends Service {
      * when an adapter fails after it has already accepted a request. */
     private confirmOutgoingDeliveries;
     private recordOutgoingDeliveryFailure;
+    /** Update the M6.1 ledger stored beside the authoritative script. Callers
+     * already hold the story queue, so this helper never opens a nested serial
+     * section and cannot reorder platform delivery. */
+    private updateScriptDeliveryOutcome;
+    private recordPlatformDeliveryOutcome;
     private resolveLiteralQuoteMessageId;
     /** Records only completed background deliveries. It is intentionally a
      * bounded action ledger, rather than a duplicate conversation transcript. */
@@ -700,6 +951,9 @@ export declare class InterludeService extends Service {
     private typingDelayMilliseconds;
     private findBotForParticipant;
     private get autoAdvanceConfig();
+    private get urgeConfig();
+    private get effectiveUrgeRuntime();
+    private scheduleUrgeAdvance;
     private isAutomaticAdvancePaused;
     private dueConversationFollowUps;
     /** Remove elapsed short passes after their single writing turn. The next
@@ -739,6 +993,14 @@ export declare class InterludeService extends Service {
     private get memoryConfig();
     private get browserConfig();
     private ensureContinuity;
+    private compactionFingerprint;
+    private compactionIsBackedOff;
+    private noteCompactionFailure;
+    /** Confirm the database checkpoint moved after a successful compactor call.
+     * A provider response alone is not enough: if the write was lost or
+     * interrupted, retrying the same range on every turn would recreate the
+     * token-burning loop this guard is meant to stop. */
+    private compactionCheckpointAdvanced;
     private scheduleCompaction;
     private compactStories;
     private getSchedulePreplan;
@@ -776,6 +1038,7 @@ export declare class InterludeService extends Service {
     private scheduleFactEmbeddingBackfill;
     private backfillFactEmbeddings;
     private persistStatePatch;
+    private developmentForPrompt;
     private report;
     /** Emit an operational record only when the selected verbosity includes it.
      * Summary is for outcomes, standard is for scheduler/model activity, and
@@ -822,9 +1085,27 @@ export declare class InterludeService extends Service {
 /** Detect record/audio segments from both Koishi elements and raw OneBot CQ
  * fallback without retaining the binary voice payload. */
 export declare function extractSessionVoiceCount(session: Pick<Session, 'content'>): number;
-/** Voice and typed text share one user event. The explicit marker lets the
- * narrator distinguish recognized speech from ordinary typed text. */
-export declare function mergeUserMessageWithVoiceTranscripts(text: string, transcripts: string[], detected?: number): string;
+/** Extract fetchable voice/audio tokens for the native-audio channel.
+ * Unlike images, records prefer the OneBot file token: raw record URLs serve
+ * SILK, which only SnowLuma's server-side transcode (get_record out_format)
+ * can turn into a model-readable audio payload. */
+export declare function extractSessionAudioSources(session: Session): string[];
+export interface SessionFileFact {
+    name: string;
+    url: string;
+    size: number;
+    audio: boolean;
+}
+/** Inbound `<file>` elements carry the QQ CDN URL, display name and size.
+ * They are attachment facts: the raw markup must never reach the model as
+ * text, and audio-named files feed the native-audio channel. */
+export declare function extractSessionFileFacts(session: Session): SessionFileFact[];
+/** 群聊入站没有原生附件通道：把 <img>/<file>/<record> 等元素标记转成事实
+ * 占位（保留"发过什么"的信息），URL 污水不进群上下文，也不再被模型复述。 */
+export declare function describeGroupAttachments(content: unknown): string;
+/** Audio files arrive as original bytes (unlike SILK voice records). Accept
+ * only formats the OpenAI-compatible input_audio channel documents. */
+export declare function guessAudioFormat(bytes: Buffer, hintedName?: string): string;
 /**
  * A model's willingness is an intent estimate, not a transport permission.
  * Native faces need a visible-text counterpart so a model cannot turn every
@@ -846,13 +1127,15 @@ export declare function normalizeAllowedReactions(value: unknown): ChatReactionN
 /** Parse only the narrow event ledger shape. Unknown model fields and empty
  * plans are discarded before they can become a source of world state. */
 export declare function normalizeTimelinePlan(value: unknown): TimelinePlan | undefined;
+/** Human-readable diff of why a model plan was rejected, for the warn log. */
+export declare function describeTimelinePlanRejection(value: unknown): string;
 /** Automatic script prose is a rendering, not the next turn's temporal source.
  * A compact host ledger retains the real sequence without letting a previous
  * paragraph be copied into a new time window. */
 export declare function timelineEntryPromptProjection(entry: ScriptEntry): ScriptEntry;
 export declare function normalizeGroupChatActions(decision: NarrativeDecision, capabilities: ChatActionCapabilities | undefined, context: GroupContext): ExecutableGroupChatActions;
 export declare function formatGroupSpeaker(senderName: string, senderId: string): string;
-export declare function normalizeGroupVisibleReply(raw: NarrativeDecision['groupReply'], interaction: NarrativeDecision['interaction'], maxCharacters: number): string;
+export declare function normalizeGroupVisibleReply(raw: NarrativeDecision['groupReply'], interaction: NarrativeDecision['interaction'], maxCharacters: number, separator?: string): string;
 export declare function visibleReplyMode(decision: NarrativeDecision, phase: NarrativeRequest['phase'], groupContext?: GroupContext): string;
 export declare function hasRequiredNarrativeScript(value: NarrativeDecision | undefined | null): boolean;
 export declare function resolveBlindModeConfig(value?: Partial<BlindModeConfig>): BlindModeConfig;
@@ -862,6 +1145,7 @@ export declare const resolveBlackBoxConfig: typeof resolveBlindModeConfig;
  * evidence. This keeps named supporting cast available without treating them
  * as automatically present. */
 export declare function normalizeScenePresenceDrafts(value: unknown, entries: ScriptEntry[], now?: Date): ScenePresenceState[];
+export declare function normalizeInteraction(value: unknown, now: Date, runtime: RuntimeConfig): NarrativeInteraction | undefined;
 /** Keeps a single due-turn private to one relationship while ensuring that
  * every plan that was already due at the start of the sweep gets a chance to
  * be judged before the next sweep interval. */
@@ -871,6 +1155,9 @@ export declare function shouldSupersedeNarrativeRequest(inFlightRequestId: numbe
  * drivers and hot-reload paths can return ISO strings, so normalize every row
  * crossing the service boundary before time arithmetic or prompt building. */
 export declare function normalizeDatabaseRow(table: string, value: unknown): any;
+/** Literal recall lane shared by raw script and durable facts. Chinese
+ * bigrams preserve useful names and objects without requiring word splitting. */
+export declare function historyLexicalScore(query: string, content: string): number;
 /** How many sticker descriptions a semantically filtered turn injects. */
 export declare const SEMANTIC_STICKER_LIMIT = 12;
 /** Pure ranking used by the semantic sticker filter. Assets without a vector
@@ -882,3 +1169,4 @@ export declare function rankStickerCatalog<T extends {
 /** Only static raster images worth the re-render enter Puppeteer downscaling:
  * tiny images would not shrink further and animated ones have their own path. */
 export declare function shouldDownscaleImage(mimeType: string, dataUri: string): boolean;
+export declare function detectLiveScriptTimeOverflow(script: unknown, phase: NarrativeRequest['phase'], from: Date, now: Date, timezone: string, endorsedClocks?: ReadonlySet<number>): string;

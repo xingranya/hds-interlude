@@ -62,11 +62,11 @@ test('prompt payload hides message references until chat capabilities are active
   }
   const hidden = toPromptPayload(base) as Record<string, any>
   const visible = toPromptPayload({ ...base, chatCapabilities: capabilities }) as Record<string, any>
-  assert.equal(hidden.chatCapabilities, undefined)
-  assert.equal(hidden.groupContext.messages[0].messageRef, undefined)
-  assert.equal(hidden.groupContext.messages[0].messageId, undefined)
-  assert.equal(visible.groupContext.messages[0].messageRef, 'msg-7')
-  assert.equal(visible.groupContext.messages[0].messageId, undefined)
+  assert.equal(hidden.incomingEvent.chatCapabilities, undefined)
+  assert.equal(hidden.incomingEvent.groupContext.messages[0].messageRef, undefined)
+  assert.equal(hidden.incomingEvent.groupContext.messages[0].messageId, undefined)
+  assert.equal(visible.incomingEvent.groupContext.messages[0].messageRef, 'msg-7')
+  assert.equal(visible.incomingEvent.groupContext.messages[0].messageId, undefined)
 })
 
 test('quoted messages retain author ownership and bounded readable content', () => {
@@ -96,9 +96,9 @@ test('quoted context is conditional and remains separate from the new message', 
     ...base,
     quotedMessages: [{ messageIndex: 1, senderId: 'bot', senderName: 'Yukiyo', speaker: '主角「Yukiyo」', content: '早点休息。' }],
   }) as Record<string, any>
-  assert.equal(withoutQuote.currentEvent.quotedMessages, undefined)
-  assert.equal(withQuote.currentEvent.content, '你这句话是什么意思')
-  assert.equal(withQuote.currentEvent.quotedMessages[0].content, '早点休息。')
+  assert.equal(withoutQuote.incomingEvent.event.quotedMessages, undefined)
+  assert.equal(withQuote.incomingEvent.event.content, '你这句话是什么意思')
+  assert.equal(withQuote.incomingEvent.event.quotedMessages[0].content, '早点休息。')
 
   const ordinaryPrompt = systemPrompt('user-message', '', '', '', '', '')
   const quotedPrompt = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, true)
@@ -125,7 +125,10 @@ test('group delivery uses the bot from the live session before stale story trans
   const sendGroupMessage = (InterludeService.prototype as any).sendGroupMessage
   const delivered = await sendGroupMessage.call(service, transportStory, 'group:100', '你好', undefined, liveSession)
 
-  assert.deepEqual(delivered, { deliveredSegments: ['你好'], complete: true })
+  assert.deepEqual(delivered, {
+    deliveredSegments: ['你好'], complete: true,
+    segmentOutcomes: [{ index: 0, content: '你好', status: 'delivered' }],
+  })
   assert.deepEqual(sentBySession, [['group:100', '你好']])
   assert.deepEqual(sentByStaleBot, [])
 })
@@ -168,7 +171,13 @@ test('a failed segment makes group delivery incomplete, even when an earlier seg
   const sendGroupMessage = (InterludeService.prototype as any).sendGroupMessage
   const delivered = await sendGroupMessage.call(service, transportStory, 'group:100', '第一段<sep/>第二段', undefined, liveSession)
 
-  assert.deepEqual(delivered, { deliveredSegments: ['第一段'], complete: false })
+  assert.deepEqual(delivered, {
+    deliveredSegments: ['第一段'], complete: false,
+    segmentOutcomes: [
+      { index: 0, content: '第一段', status: 'delivered' },
+      { index: 1, content: '第二段', status: 'failed', reason: 'Error: network interruption' },
+    ],
+  })
   assert.deepEqual(deliveredSegments, ['第一段', '第二段'])
 })
 

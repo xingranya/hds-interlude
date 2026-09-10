@@ -559,7 +559,7 @@
       <h1><span>HDS</span> Interlude</h1>
       <button class="theme-toggle" id="themeToggle" type="button" title="切换亮暗配色">☾</button>
     </div>
-    <p>从零到能聊天 · 0.1.4 配置向导</p>
+<p>从零到能聊天 · 1.0.1-beta6-rebuild 配置向导</p>
   </div>
   <div class="steps" id="stepNav"></div>
   <div class="progress-wrap">
@@ -779,19 +779,19 @@ npm install</pre></div>
 <!-- ── Step 5 插件安装 ── -->
 <section class="step-page" data-step="5">
   <h2>第 5 步 · 安装插件</h2>
-  <p class="subtitle">安装完整 Koishi Console 基线、OneBot 适配器，并使用随部署材料提供的 HDSI 0.1.4 安装包。</p>
+<p class="subtitle">安装完整 Koishi Console 基线、OneBot 适配器，并使用随部署材料提供的 HDSI 1.0.1-beta6-rebuild 安装包。</p>
 
   <div class="card">
-    <h3>下载并安装 0.1.4 <span class="tag">本向导适用版本</span></h3>
-    <p>先从本次发布页的 Assets 下载 <code>koishi-plugin-hds-interlude-0.1.4.tgz</code>，放到固定位置，例如 <code>C:\Downloads</code>。随后确认 PowerShell 位于<strong>含 package.json 的 Koishi 项目根目录</strong>（例如 <code>C:\hds-bot</code>），运行：</p>
+<h3>下载并安装 1.0.1-beta6-rebuild <span class="tag">本向导适用版本</span></h3>
+<p>先从本次发布页的 Assets 下载 <code>koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz</code>，放到固定位置，例如 <code>C:\Downloads</code>。随后确认 PowerShell 位于<strong>含 package.json 的 Koishi 项目根目录</strong>（例如 <code>C:\hds-bot</code>），运行：</p>
     <div class="cmd-block"><button class="copy-btn">复制</button><pre>cd C:\hds-bot
 npm install @koishijs/plugin-actions @koishijs/plugin-analytics @koishijs/plugin-commands @koishijs/plugin-config @koishijs/plugin-console @koishijs/plugin-explorer @koishijs/plugin-help @koishijs/plugin-http @koishijs/plugin-insight @koishijs/plugin-locales @koishijs/plugin-logger @koishijs/plugin-market @koishijs/plugin-notifier @koishijs/plugin-oobe @koishijs/plugin-proxy-agent @koishijs/plugin-sandbox @koishijs/plugin-status koishi-plugin-dataview koishi-plugin-rate-limit koishi-plugin-telemetry koishi-plugin-theme-vanilla
 npm install koishi-plugin-adapter-onebot
-npm install --save-exact "C:\Downloads\koishi-plugin-hds-interlude-0.1.4.tgz"</pre></div>
+npm install --save-exact "C:\Downloads\koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz"</pre></div>
     <ul>
       <li>第一条命令补齐 Koishi 的配置、插件市场、资源浏览、数据查看、通知、状态与主题模块；无论脚手架初始选项如何，Console 都会保留完整管理页面</li>
       <li><code>koishi-plugin-adapter-onebot</code>：让 Koishi 通过 SnowLuma 收发 QQ 消息</li>
-      <li><code>koishi-plugin-hds-interlude-0.1.4.tgz</code>：HDSI 正式版安装包；本向导中的表情包、侧端识图、时间线与聊天动作配置以此版本为准</li>
+<li><code>koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz</code>：HDSI 安装包；本向导中的表情包、侧端识图、时间线与聊天动作配置以此版本为准</li>
     </ul>
     <div class="notice warn">⚠ 请勿在 <code>C:\Users\你的用户名</code> 等非项目目录运行安装命令，否则包装到了错误位置，Koishi 不会加载它。</div>
     <p class="muted">最后确认数据库插件：脚手架一般自带；没有的话运行 <code>npm install @koishijs/plugin-database-sqlite</code>，已装会很快完成。</p>
@@ -799,7 +799,7 @@ npm install --save-exact "C:\Downloads\koishi-plugin-hds-interlude-0.1.4.tgz"</p
 
   <div class="card">
     <h3>为什么不使用插件市场？</h3>
-    <p class="muted">插件市场的公开版本可能落后于本向导。为了让生成的配置与插件能力完全一致，请固定安装上面的 <code>0.1.4</code> 安装包。</p>
+<p class="muted">插件市场的公开版本可能落后于本向导。为了让生成的配置与插件能力完全一致，请固定安装上面的 <code>1.0.1-beta6-rebuild</code> 安装包。</p>
   </div>
 </section>
 
@@ -908,7 +908,7 @@ npm install --save-exact "C:\Downloads\koishi-plugin-hds-interlude-0.1.4.tgz"</p
   <p class="subtitle">人设和聊天白名单——你的角色由这里诞生。模型连接在上一步已完成。</p>
 
   <div class="card">
-    <h3>① 角色人设（剧本起点）</h3>
+    <h3>① 角色人设（故事档案）</h3>
     <div class="field inline">
       <div>
         <label>角色名</label>
@@ -1074,7 +1074,7 @@ interlude.story.start</pre></div>
 
   <div class="card">
     <h3>备选：一键部署脚本</h3>
-    <p class="muted">把下面脚本保存为 <code>setup.ps1</code>（或直接下载），并把 <code>koishi-plugin-hds-interlude-0.1.4.tgz</code> 放到同一文件夹；在<strong>完成第 1、2、3 步之后</strong>运行。脚本会自动完成创建 Koishi 项目、安装插件、写入配置。</p>
+<p class="muted">把下面脚本保存为 <code>setup.ps1</code>（或直接下载），并把 <code>koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz</code> 放到同一文件夹；在<strong>完成第 1、2、3 步之后</strong>运行。脚本会自动完成创建 Koishi 项目、安装插件、写入配置。</p>
     <div class="cmd-block"><button class="copy-btn" id="copyPsBtn">复制脚本</button><pre class="yaml-preview" id="psScript"></pre></div>
     <p><button class="btn primary" id="downloadPsBtn">⬇ 下载 setup.ps1</button></p>
     <p class="muted">运行方式：在脚本所在目录打开 PowerShell，执行 <code>powershell -ExecutionPolicy Bypass -File .\setup.ps1</code>，按提示输入安装目录和项目文件夹名即可。</p>
@@ -1429,7 +1429,7 @@ interlude.story.start</pre></div>
 
   function fullYaml() {
     return [
-      '# Koishi 配置文件 —— 由 HDS Interlude 0.1.4 部署向导生成',
+'# Koishi 配置文件 —— 由 HDS Interlude 1.0.1-beta6-rebuild 部署向导生成',
       '# 放置位置：Koishi 项目根目录（与 package.json 同级），覆盖前请备份原文件',
       '# ⚠ 内含 API Key 与 Token，请勿分享或上传到公开仓库',
       '',
@@ -1482,18 +1482,18 @@ interlude.story.start</pre></div>
       return line.replace(/'/g, "''");
     }).join('\n');
     return [
-      '# HDS Interlude 0.1.4 一键部署脚本（由部署向导生成）',
+'# HDS Interlude 1.0.1-beta6-rebuild 一键部署脚本（由部署向导生成）',
       '# 使用前提：已安装 Node.js；SnowLuma 已启动并注入 QQ 进程',
       '# 运行：powershell -ExecutionPolicy Bypass -File .\\setup.ps1',
       '',
       '$ErrorActionPreference = "Stop"',
       '',
       '# HDSI beta 安装包：默认与 setup.ps1 放在同一文件夹；缺失时可手动输入完整路径',
-      '$betaPackage = Join-Path $PSScriptRoot "koishi-plugin-hds-interlude-0.1.4.tgz"',
+'$betaPackage = Join-Path $PSScriptRoot "koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz"',
       'if (-not (Test-Path -LiteralPath $betaPackage)) {',
-      '  $betaPackage = Read-Host "请输入 koishi-plugin-hds-interlude-0.1.4.tgz 的完整路径"',
+'  $betaPackage = Read-Host "请输入 koishi-plugin-hds-interlude-1.0.1-beta6-rebuild.tgz 的完整路径"',
       '}',
-      'if (-not (Test-Path -LiteralPath $betaPackage)) { throw "未找到 HDSI 0.1.4 安装包，脚本已停止。" }',
+'if (-not (Test-Path -LiteralPath $betaPackage)) { throw "未找到 HDSI 1.0.1-beta6-rebuild 安装包，脚本已停止。" }',
       '$betaPackage = (Resolve-Path -LiteralPath $betaPackage).Path',
       '',
       '# 1. 检查 Node.js',
@@ -2087,5 +2087,3 @@ interlude.story.start</pre></div>
 </script>
 </body>
 </html>
-
-

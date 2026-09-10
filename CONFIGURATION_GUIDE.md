@@ -1,35 +1,36 @@
 # HDS Interlude 配置指南
 
-适用版本：`0.1.4`
+适用版本：`1.0.1-beta6-rebuild`
 
-第一次安装先看 `BEGINNER_GUIDE.md`。本文件严格按照 Koishi Console 的显示顺序说明当前字段；旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
+第一次安装先看 `BEGINNER_GUIDE.md`。本文件按配置依赖关系组织字段；下方先列出当前 Console 的实际顺序，旧版本已经移除或隐藏的字段集中列在末尾，不再混入正常配置流程。
 
 ## Console 顺序
 
-1. `blindMode`：失明模式
-2. `storyDefaults`：剧本起点
-3. `model`：模型与服务商
-4. `onebot`：OneBot / NapCat 权限
-5. `chatActions`：平台聊天动作
-6. `stickers`：本地表情包
-7. `sharedStory`：共享剧本
-8. `runtime`：对话与时间
-9. `schedulePreplan`：近期稳定日程
-10. `agency`：主体行动窗口
-11. `memory`：连续性与记忆
-12. `alterSystem`：临时氛围偏移
-13. `browser`：只读网页观察
-14. `logging`：日志与隐私
+配置页按 必填 → 结构 → 节奏 → 表达 → 内在 → 扩展 → 维护 分组编号：
+
+| 分组 | 序号 | 键 | 名称 |
+| --- | --- | --- | --- |
+| 【必填】 | 1 | `storyDefaults` | 故事档案 |
+| 【必填】 | 2 | `model` | 模型中心 |
+| 【必填】 | 3 | `onebot` | QQ 接入 |
+| 【结构】 | 4 | `sharedStory` | 共享主剧本 |
+| 【节奏】 | 5 | `runtime` | 运行时与节奏 |
+| 【节奏】 | 6 | `urge` | Urge 弹性推进 |
+| 【节奏】 | 7 | `schedulePreplan` | 日程预排 |
+| 【节奏】 | 8 | `timelineDirector` | 时间导演 |
+| 【节奏】 | 9 | `agency` | 行动窗口 |
+| 【表达】 | 10 | `chatActions` | 聊天动作 |
+| 【表达】 | 11 | `stickers` | 本地表情包 |
+| 【内在】 | 12 | `memory` | 记忆与连续性 |
+| 【内在】 | 13 | `alterSystem` | Alter 情绪 |
+| 【扩展】 | 14 | `browser` | 网页观察 |
+| 【维护】 | 15 | `blindMode` | 盲区模式 |
+| 【维护】 | 16 | `logging` | 日志 |
 
 首次测试先完成 `storyDefaults`、`model`、`onebot`、`sharedStory` 和 `runtime`；`blindMode` 保持关闭。Embedding、网页观察、主动联系和内容日志应在基础私聊稳定后逐项开启。
 
-## 1. blindMode：失明模式
 
-开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
-
-它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
-
-## 2. storyDefaults：剧本起点
+## 1. storyDefaults：故事档案（【必填 1】）
 
 这些字段只在创建新主剧本时写入 Canon。修改 Console 不会自动重写已经存在的故事。
 
@@ -52,7 +53,7 @@
 
 重载和长间隔不会沿用旧剧本中的钟点描述：当前 `nowLocal` 始终优先。时区无效时运行时回退到 UTC，因此发现上午/下午错误时应先检查这里是否为有效 IANA 名称。
 
-## 3. model：模型与服务商
+## 2. model：模型中心（【必填 2】）
 
 ### 3.1 连接顺序
 
@@ -122,9 +123,9 @@
 - `mainStreamingMode`：实验性流式首条回复，默认 `off`
 - `mainPayloadOrder`：主叙事 payload 字段顺序，默认 `legacy`
 
-`mainPayloadOrder=cache-first` 重排用户 payload：对话历史（recentScript）与低频记忆层（长期事实、记忆、Overlay、场景摘要、连续性快照）前置，每轮变化的字段（时钟、当前事件、参与者状态、意图账本）后置。对支持自动前缀缓存的服务商（DeepSeek 官方、GLM 官方、Kimi/Moonshot、硅基流动等），连续对话轮命中稳定前缀后输入成本与 prefill 延迟显著下降；群聊回合与 advance 回合的历史视图不同，缓存命中率会低于私聊连续对话。payload 末尾附带 `recentExchange` 最近交换块（最多 3 条、1600 字符，排除当前消息本身），把最后几条交互重新锚定在生成点旁，避免历史前置稀释语境显著性；固定合约会同步告知模型该块是既定过去的强调而非新事件。默认 `legacy` 逐字节保持历史顺序。开启后建议先在沙盒观察若干轮回复质量与日志中的`回复模式`分布，不适配随时切回。
+`mainPayloadOrder=cache-first` 重排用户 payload：对话历史（recentScript）与低频记忆层（长期事实、记忆、Overlay、场景摘要；有原文时不注入旧连续性快照）前置，每轮变化的字段（时钟、当前事件、参与者状态、意图账本）后置。对支持自动前缀缓存的服务商（DeepSeek 官方、GLM 官方、Kimi/Moonshot、硅基流动等），连续对话轮命中稳定前缀后输入成本与 prefill 延迟显著下降；群聊回合与 advance 回合的历史视图不同，缓存命中率会低于私聊连续对话。payload 末尾附带 `recentExchange` 最近交换块（最多 3 条、1600 字符，排除当前消息本身），把最后几条交互重新锚定在生成点旁，避免历史前置稀释语境显著性；固定合约会同步告知模型该块是既定过去的强调而非新事件。默认 `legacy` 使用常规字段顺序，两种模式都使用 beta6 的原文与执行语义。开启后建议先在沙盒观察若干轮回复质量与日志中的`回复模式`分布，不适配随时切回。
 
-自动推进独立于 cache-first：它先复用压缩模型生成严格位于当前时间窗口内的相对事件账本，再让主叙事模型渲染。`recentExchange` 仅包含真实收发消息和已投递动作，不包含 script prose；因此启用前缀缓存不会复制上一段自动剧本或改变宿主时间轴。
+自动推进独立于 cache-first：导演提供当前窗口内的相对推进建议，主叙事写实际生活。beta6 将新计划与已提交原文分开，原文引用和投递结果形成下一次交接；旧账本只解释旧版条目。`recentExchange` 仅包含真实收发消息和已投递动作，不复制 script prose。两种模式均保留宿主时钟与原文，缓存本身不是拟真度保证。
 
 思考型模型或 Ollama 兼容网关若在 `json-object` 下出现空回复、字段缺失或反复触发恢复重写，可先切换为 `prompt-only`，并按模型实际推理长度适度提高 `mainMaxTokens`。确认模型能稳定输出结构化结果后，再使用 `json-object`。
 
@@ -147,14 +148,14 @@
 - `vision.mode`：`native` 把图片作为原生多模态输入交给主叙事；`sidecar` 由 `useForVision` 视觉连接先生成一次事实观察，再交给纯文本主模型。不要依赖自动探测或失败后隐式回退，明确选择可避免重复请求。
 - `vision.detail`：`low` 更省 token，`high` 更适合细小文字，`auto` 交由服务商决定；对智谱官方接口会自动省略不兼容的 `detail` 字段。
 - `vision.maxImageDimension`：视觉输入图片的最长边（默认 `1024`，可选 `0/512/768/1024`）。native 和 sidecar 都会复用此降采样；通过可选 Puppeteer 服务重渲染，节省多模态 token 与上传时间，并顺带修正 EXIF 旋转；Puppeteer 不可用或图片本身较小（<150KB）时自动透传原图，`0` 表示关闭。
-- `compaction`：后台整理已发生剧本、事实和状态提案。模型由 `useForCompaction` 选择；这里配置温度、top-p、输出、超时、响应格式和压缩提示词。
+- `compaction`：后台整理已发生剧本、事实和状态提案。模型由 `useForCompaction` 选择；这里配置温度、top-p、输出、超时、响应格式和压缩提示词。响应格式默认独立为 `json-object`，不会跟随主叙事的 `prompt-only`；同一未变化场景压缩失败后会短暂冷却，新增剧本条目或手动压缩可再次尝试。
 - `embedding`：长期事实语义检索。模型由 `useForEmbedding` 选择；`liveQuery=false` 可避免每次实时回复多一次向量请求，`backfillBatchSize` 控制后台补齐旧事实的速度。
 - `embedding.semanticHistory`（默认关闭）：历史语义召回。开启后剧本条目会在后台逐步向量化（最新优先，渐进覆盖全表，无时间窗），每次私聊按当前消息检索最相关的 3 条旧片段注入“回忆块”；召回严格遵守当前参与者的私聊可见性边界。条目已有向量会进入故事级内存缓存（一次加载、增量扩充）；每轮多一次向量请求。这是“取餐码/拿到了”级细节记忆的系统性解法。
 - `embedding.semanticStickerFilter`（默认开启）：贴纸目录语义过滤。开启后按当前消息的向量相似度只注入最相关的 12 条贴纸描述（素材描述与别名会在后台自动向量化，每轮最多补齐 8 条）；Embedding 模型不可用或素材尚未建立向量时自动回退全量目录。`stickers.catalogLimit` 仍是绝对上限。
 
 Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址推导 `/embeddings`。非标准网关应填写完整地址。
 
-## 4. onebot：OneBot / NapCat 权限
+## 3. onebot：QQ 接入（【必填 3】）
 
 `onebot.enabled=true` 后采用显式白名单：`botAccounts` 或 `userAccounts` 为空都会拒绝对应账号。
 
@@ -192,15 +193,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 
 转写成功后，主模型收到的用户事件会带有 `[用户语音转写]` 标记，并和当前文本、图片一起构成同一个回合。该功能需要 SnowLuma 支持原始 OneBot `fetch_ptt_text` 动作；NapCat 或其它实现不支持时会安全降级。它不把音频文件或 base64 写入 HDSI 数据库。
 
-## 5. chatActions 与 stickers：平台表达
-
-`nativeFaces` 控制是否允许结构化 QQ 原生小表情；关闭后主模型不会收到对应字段，插件也不会发送 face 段。
-
-`expressionThreshold` 是表达严格度，不是固定发送频率。HDSI 会同时校验模型意愿与当前回复文字是否具有相同的非语言含义：低分或语义不相符时不投递。`0.70` 是平衡值；`0.90` 以上非常克制；`0.95` 及以上接近关闭，适合只保留纯文字聊天的场景。
-
-`stickers.enabled` 默认关闭。开启后插件每五分钟扫描 `directory`，只对新增或变化的图片调用勾选了 `useForStickers` 的视觉模型生成描述；`maxFileSizeMB` 和 `catalogLimit` 分别限制单文件大小及主提示词可见素材数量。`stickers.descriptionResponseFormat` 可独立选择描述模型的返回格式：`json-object` 使用 API JSON mode；模型或中转站频繁报 JSON mode 错误时改为 `prompt-only`，插件不再发送 `response_format`，但仍会从模型输出中解析描述 JSON。
-
-## 6. sharedStory：共享剧本
+## 4. sharedStory：共享主剧本（【结构 4】）
 
 当前运行时固定为“同一机器人账号一个活动主剧本”，因此不再显示旧版 `enabled` 开关。
 
@@ -213,7 +206,7 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `participantContextLimit` | 单次请求携带的其它参与者摘要数量。 |
 | `managerAccounts` | 有权执行全局管理命令的 QQ；空表表示所有已授权用户。 |
 
-## 7. runtime：对话与时间
+## 5. runtime：运行时与节奏（【节奏 5】）
 
 ### 6.1 消息合并、回复和失败恢复
 
@@ -250,7 +243,20 @@ Embedding 地址留空时，插件会尝试从标准 `/chat/completions` 地址�
 | `contextTimeWindowMinutes` | 与条目下限取并集的时间窗口，默认 `60` 分钟；窗口内真实用户/角色消息受保护。 |
 | `memoryLimit` | 主叙事携带的长期事实数量。 |
 
-## 8. schedulePreplan：近期稳定日程
+## 6. urge：弹性推进（【节奏 6】）
+
+`urge.enabled` 默认关闭。开启后，它仍使用同一条自动剧本链，但以真实用户消息的热度、已提交剧本中的 `urge`／`slow` 交接和既有 Agency 行动决定下一次 `nextAdvanceAt`；它替代固定的对话后短期补写与普通固定间隔，不新增独立模型调用，不降低原文精细度。
+
+| 字段 | 默认值 | 说明 |
+| --- | --- | --- |
+| `enabled` | `false` | 开启弹性调度。`runtime.autoAdvanceEnabled` 仍是总开关。 |
+| `frequency` | `medium` | `low`／`medium`／`high`／`custom`；只改变推进时间范围，不改变角色性格或联系文本。 |
+| `proactiveWillingnessThreshold` | `0.4` | 仅 Urge 开启时的主动联系门槛；关闭后使用 runtime 原门槛。 |
+| `advanced` | 折叠 | 密聊、安静、加速与 slow 的时间范围；热度半衰期、随机量、加速有效期／预算及同对象临时最短联系间隔。 |
+
+高 Urge 必须同时有既有 Agency 允许的实际联系行动，且等到首个真实发送回执后，才会开始有限的短期加速。休息、设备不可用、隐私和负荷仍优先；自动发言不增加对话热度。关闭 Urge 后，下一次调度回到 runtime 的普通计划。详见 [Urge 实现记录](docs/development/URGE_SYSTEM_IMPLEMENTATION.md)。
+
+## 7. schedulePreplan：日程预排（【节奏 7】）
 
 Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复用 `useForCompaction` 模型，不增加独立模型选择；已有计划覆盖充足且没有新剧本证据时，程序直接保持原计划，不调用模型。首次尚无可靠规律时，插件会保存“已审查、暂无线索”的空日程记录，并等待后续新的生活证据，不会反复消耗压缩调用。
 
@@ -266,7 +272,14 @@ Schedule Preplan 每天在后台空闲整理时检查主角近期日程。它复
 
 主叙事只接收从当前时刻起未来约 12 小时、最多八项日程块，并明确标记为“计划而非已发生事实”。候选变化不参与固定日程锚点，也不能单独制造生活事件、人物或消息。查看状态使用 `interlude.schedule`；需要重新审查时使用 `interlude.schedule.refresh`，`interlude.schedule.rebuild` 是兼容别名。完整规则见 `docs/SCHEDULE_PREPLAN.md`。
 
-## 9. agency：主体行动窗口
+## 8. timelineDirector：时间导演（【节奏 8】）
+
+启用后，自动推进与较长后台窗口先由压缩链路生成相对时间账本（只含客观时间事实与可能的时间逻辑），主模型据账本续写剧本。设计原则：不做笃定的未来预测（不写死几点起床、几点完成）；用户消息对主角的影响（如吵醒）由主模型判断。失败时降级为无账本推进并带熔断冷却，不冻结自动推进。
+
+| 字段 | 说明 |
+| --- | --- |
+| `enabled` | 默认开启；关闭后自动回合直接续写原始剧本。 |
+## 9. agency：行动窗口（【节奏 9】）
 
 Agency Window 只描述角色能否采取外部联系行动的现实条件，不描述情绪、关系阶段或联系风格。
 
@@ -281,7 +294,15 @@ Agency Window 包含 `activityLoad`、`privacy` 和 `deviceAccess`。自动生�
 
 `runtime.allowProactiveMessages=false` 时 Agency 不产生可见联系。`proactiveWillingnessThreshold`、白名单和单回合动作上限仍然是最终安全边界。Agency 不读取 Alter 数值，也不会影响文风。
 
-## 10. memory：连续性与记忆
+## 10-11. chatActions 与 stickers：聊天动作与本地表情包（【表达】）
+
+`nativeFaces` 控制是否允许结构化 QQ 原生小表情；关闭后主模型不会收到对应字段，插件也不会发送 face 段。
+
+`expressionThreshold` 是表达严格度，不是固定发送频率。HDSI 会同时校验模型意愿与当前回复文字是否具有相同的非语言含义：低分或语义不相符时不投递。`0.70` 是平衡值；`0.90` 以上非常克制；`0.95` 及以上接近关闭，适合只保留纯文字聊天的场景。
+
+`stickers.enabled` 默认关闭。开启后插件每五分钟扫描 `directory`，只对新增或变化的图片调用勾选了 `useForStickers` 的视觉模型生成描述；`maxFileSizeMB` 和 `catalogLimit` 分别限制单文件大小及主提示词可见素材数量。`stickers.descriptionResponseFormat` 可独立选择描述模型的返回格式：`json-object` 使用 API JSON mode；模型或中转站频繁报 JSON mode 错误时改为 `prompt-only`，插件不再发送 `response_format`，但仍会从模型输出中解析描述 JSON。
+
+## 12. memory：记忆与连续性（【内在 12】）
 
 ### 10.1 整理触发和预算
 
@@ -329,7 +350,7 @@ Continuity 从 beta5 起只保存已经建立的 `current`、`recent` 和 `salie
 
 Overlay 压缩字段包括 `overlayCompressionEnabled`、近期保留天数、周/月窗口和摘要字符上限。管理员可使用 `interlude.overlay.status`、`interlude.overlay.compact` 和 `interlude.overlay.clear` 检查或维护。
 
-## 11. alterSystem：临时氛围偏移
+## 13. alterSystem：Alter 情绪（【内在 13】）
 
 Alter 只衡量本轮新事件对整体氛围造成的净变化：正数偏严肃，负数偏轻松，范围 `-5..5`。
 
@@ -347,7 +368,7 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 达到阈值后，本轮先完成剧本、状态和可见消息；侧端分析在同一故事队列中后台运行，不阻塞当前回复。失败时保留累计值并进入五分钟冷却。完整算法见 `docs/ALTER_SYSTEM.md`。
 
-## 12. browser：只读网页观察
+## 14. browser：网页观察（【扩展 14】）
 
 需要同时启用 Koishi Puppeteer。插件只允许搜索或访问公开 HTTP(S) 页面，不登录、不填表、不下载、不发布内容，并拒绝 localhost、私网和不安全协议。
 
@@ -366,7 +387,13 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 
 `allow-immediate` 会为少数私聊额外执行一次观察并重新请求主叙事，因此延迟和费用都更高。首次测试使用 `deferred-only`。
 
-## 13. logging：日志与隐私
+## 15. blindMode：盲区模式（【维护 15】）
+
+开启 `blindMode.enabled` 后，HDSI 不注册自己的管理指令，并静默拦截当前 Koishi 实例中所有已经识别的指令；普通聊天仍会进入叙事。HDSI 的普通运行日志、错误详情和消息预览都会隐藏，只按 `healthReportMinutes` 输出一次不含故事或账户内容的运行状态心跳；其它插件仍遵循各自的日志配置。
+
+它适合追求高度沉浸感，并且模型、账号白名单和故事档案已经稳定正常的环境。关闭此模式需要在 Console 修改配置并重载插件；失明模式开启期间无法通过聊天指令恢复管理能力。旧 `blackBox` 配置仍可兼容读取，但 Console 只显示 `blindMode`。
+
+## 16. logging：日志（【维护 16】）
 
 | 字段 | 说明 |
 | --- | --- |
@@ -404,3 +431,16 @@ Alter 模型由上方 `useForAlter` 选择。`temperature`、`topP`、`maxTokens
 5. 开启自动推进和对话后续补写。
 6. 检查 Alter 日志与后台分析。
 7. 最后启用 Embedding、视觉、网页观察、群聊和跨账号主动联系。
+
+
+## chatRhythm：已弃用的兼容配置
+
+从 beta5-m9 起，旧检测器、反制指令和投递后统计已经删除，Console 隐藏此配置。旧 YAML 与数据库统计继续兼容读取，以下字段不再影响运行；无需手动删除历史状态。
+
+- `enabled`（默认开启）
+- `mode` 检测档位：`gentle` 仅在结构完全同构时判定（适合强模型）；`balanced`（默认）增加尾段语气复读与字数箱体两条判据；`aggressive` 收紧样本要求（最少 4 轮），更早触发。
+- `historyLimit` 节奏签名历史窗口（默认 12 轮）。
+- `collapseMinSamples` 宽限期：样本不足时不判定（gentle 默认 6 / balanced 5 / aggressive 4）。
+- `exhaustLimit` 熔断：连续跟随失败达此轮数（默认 6）后停止注入；更换主叙事模型或手动重置后恢复。
+
+这些是旧版本字段释义，不再是当前行为。当前续写从原始剧本的最后落点继续，长段复用仅作 debug 观测，不对相同短句、反复追问或文学形式做拦截和重试。

@@ -36,7 +36,7 @@ test('only live and due prompt payloads carry the bounded commitment list', () =
   const user = toPromptPayload(request('user-message')) as Record<string, any>
   const due = toPromptPayload(request('intent-due')) as Record<string, any>
   const advance = toPromptPayload(request('advance')) as Record<string, any>
-  assert.equal(user.followUpCommitments[0].id, 7)
-  assert.equal(due.followUpCommitments[0].summary, '答应想清楚后回复耳机选择。')
-  assert.equal(advance.followUpCommitments, undefined)
+  assert.equal(user.ongoingThreads.followUpCommitments[0].id, 7)
+  assert.equal(due.ongoingThreads.followUpCommitments[0].summary, '答应想清楚后回复耳机选择。')
+  assert.equal(advance.ongoingThreads.followUpCommitments, undefined)
 })

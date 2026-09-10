@@ -23,6 +23,10 @@ export interface StorySetting {
     timezone: string;
 }
 export interface StoryState {
+    /** Versioned by src/story-state.ts. Legacy beta10 rows are version 0. */
+    schemaVersion?: number;
+    /** Unknown future top-level values survive an older runtime's read/write cycle here. */
+    extensions?: Record<string, unknown>;
     /** Evolving overlay. The original setting remains the story's canon/base. */
     settingOverlay: StorySettingOverlay;
     activeSceneId?: number;
@@ -44,13 +48,56 @@ export interface StoryState {
     /** Small concrete in-flight details (codes, orders, errands) captured by scene
      * compaction; they expire naturally and never modify canon. */
     workingDetails?: WorkingDetail[];
+    /** Source revisions prevent a delayed background review reopening settled details. */
+    workingDetailResolutions?: Record<string, number>;
     /** Host-owned unresolved state carried forward from the latest completed
      * automatic event ledger. This outranks prose-derived scratchpad wording. */
     timelineCarry?: string[];
+    /** Host-measured texting-rhythm state; surfaced to narration as the
+     * protagonist's own expression habits, never as a system directive. */
+    chatRhythm?: ChatRhythmState;
+    /** M4 materialized view of the current scene. Every derived value carries entry provenance. */
+    sceneFrame?: SceneFrame;
+    /** Conversation continuity inside one scene; elapsed time never changes its identity. */
+    dialogueBurst?: DialogueBurstState;
+}
+export type SceneFrameField = 'place' | 'presentPeople' | 'ongoingActivity' | 'postureOrMotion' | 'attention' | 'deviceAccess' | 'privacy' | 'affectiveBaseline' | 'openMotions' | 'openTopics' | 'narrativeFocus';
+export interface SceneFrame {
+    id: string;
+    localBoundaryEntryId?: number;
+    sceneId?: number;
+    place?: string;
+    presentPeople: string[];
+    ongoingActivity?: string;
+    postureOrMotion?: string;
+    attention?: string;
+    deviceAccess?: string;
+    privacy?: string;
+    affectiveBaseline?: string;
+    openMotions: string[];
+    openTopics: string[];
+    narrativeFocus?: string;
+    /** Union of every source below; kept for compact validation and retrieval. */
+    sourceEntryIds: number[];
+    sources: Partial<Record<SceneFrameField, number[]>>;
+    updatedAt: string;
+}
+export interface DialogueBurstState {
+    id: string;
+    frameId: string;
+    startedAt: string;
+    sourceEntryIds: number[];
+    lastEventId?: string;
+    /** Hashed relationship/group/life scope; raw private identifiers never enter shared state. */
+    scopeKey?: string;
+    /** Hashed lexical keys used only to notice a genuine topic discontinuity. */
+    topicKeys?: string[];
 }
 /** A tiny structured scratchpad entry. Not a durable fact: it exists to carry
  * small concrete details across the compaction boundary and then expire. */
 export interface WorkingDetail {
+    participantId?: string;
+    knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     label: string;
     value: string;
     /** Strictly-future ISO-8601; expired details are pruned at injection time. */
@@ -175,6 +222,11 @@ export interface StoryAutomationState {
     quietUntil?: string;
     /** 下一次自动生活补写的最早时间。 */
     nextAdvanceAt?: string;
+    /** Retry gate for a failed automatic timeline window. Persisted so a
+     * provider failure cannot re-enter the narrator on every background sweep
+     * or immediately recur after a process restart. */
+    timelineRetryAt?: string;
+    timelineRetryFrom?: string;
     lastAutoAdvanceAt?: string;
     lastUserMessageAt?: string;
     /** Short continuity passes scheduled from the latest conversation endpoint. */
@@ -350,6 +402,7 @@ export interface OverlaySnapshot {
     updatedAt: Date;
 }
 export interface NarrativeFact {
+    knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     id: number;
     storyId: string;
     /** Empty means a world-wide fact; otherwise it is relationship-specific. */
@@ -440,6 +493,16 @@ export interface OutgoingMessageDraft {
     userInitiated?: boolean;
     /** Set by transport when a literal quote was converted into a platform reply. */
     quoteMessageId?: string;
+    /** Stable link back to the one script event that authored all bubbles. */
+    scriptEvent?: {
+        commitId: string;
+        eventId: string;
+        eventKind: 'outgoing-message' | 'group-message';
+        causedByEventIds: string[];
+        fullContent: string;
+        bubbleIndex: number;
+        bubbleCount: number;
+    };
 }
 /** A future browsing action proposed by the narrator. It is not an observed
  * fact until Puppeteer finishes and produces a WebObservation. */
@@ -453,6 +516,7 @@ export interface BrowserIntentDraft {
 }
 /** A message to another relationship branch generated in the same writing turn. */
 export interface ConversationActionDraft {
+    actionId?: string;
     participantId: string;
     mode: 'immediate' | 'delayed';
     content: string;
@@ -468,6 +532,7 @@ export interface NarrativeInteraction {
     reply: {
         mode: InteractionReplyMode;
         content?: string;
+        actionId?: string;
         sendAt?: string;
         /** Opaque current-turn message reference; accepted only when the host advertises quote reply. */
         replyTo?: string;
@@ -557,8 +622,12 @@ export interface FollowUpResolutionDraft {
     notBefore?: string;
 }
 export interface NarrativeDecision {
+    urge?: unknown;
     /** The continuous prose written by the main narrative model. */
     script?: string;
+    /** Host-resolved literal speech spans; never an independent answer. */
+    authoredActions?: import('./script/authored-actions').AuthoredAction[];
+    lifeHandoff?: import('./script/life-handoff').LifeHandoff;
     /** Net atmosphere movement introduced by this turn: -5 relaxed, +5 serious. */
     alter?: number;
     /** Optional external-action capacity update; it never controls prose style. */
@@ -588,6 +657,7 @@ export interface NarrativeDecision {
     groupReply?: {
         mode: 'none' | 'immediate';
         content?: string;
+        actionId?: string;
         /** Opaque reference selected from the current groupContext only. */
         replyTo?: string;
     };
@@ -606,7 +676,18 @@ export interface NarrativeImage {
     mimeType: string;
     dataUri: string;
 }
+/** A transient native-audio attachment for the current private-message turn.
+ * The payload is a SnowLuma server-side transcode of the QQ voice record; it
+ * is intentionally never persisted in script entries, memories, or facts. */
+export interface NarrativeAudio {
+    id: string;
+    /** OpenAI-compatible input_audio format token, e.g. 'mp3'. */
+    format: string;
+    base64: string;
+}
 export interface NarrativeRequest {
+    urgeEnabled?: boolean;
+    contactThreads?: import('./script/knowledge-evidence').ContactEvidenceThread[];
     /** 主模型只读取经过预算控制的连续性包，不读取完整历史。 */
     phase: NarrativePhase;
     /** Refresh the compact continuity note on this turn. */
@@ -622,6 +703,8 @@ export interface NarrativeRequest {
     userReportedTimes?: UserReportedTime[];
     /** Native image inputs observed in this one incoming user event only. */
     images?: NarrativeImage[];
+    /** Native audio inputs observed in this one incoming user event only. */
+    audio?: NarrativeAudio[];
     /** Text-only observations produced by a separately configured visual model.
      * They are transient current-event context and never enter script storage. */
     visualObservations?: string[];
@@ -643,6 +726,12 @@ export interface NarrativeRequest {
     activeConsequences: NarrativeIntent[];
     supersededIntents: NarrativeIntent[];
     recentEntries: ScriptEntry[];
+    /** Executable writing affordances; prompt and host share the same switches. */
+    writingOptions?: {
+        messageSeparator: string;
+        splitReplyMessages: boolean;
+        browserMode: 'disabled' | 'deferred-only' | 'allow-immediate';
+    };
     /** Raw chat entries at or after this point survive the normal prose budget. */
     recentProtectionSince?: Date;
     memories: NarrativeMemory[];
@@ -650,6 +739,11 @@ export interface NarrativeRequest {
     facts?: NarrativeFact[];
     /** Older setting evolution, separated from the live three-day overlay. */
     overlaySnapshots?: OverlaySnapshot[];
+    developmentTendencies?: Array<{
+        target: StatePatchTarget;
+        tendency: string;
+        sourceEntryIds: number[];
+    }>;
     /** Recent, safety-filtered web observations available as narrative context. */
     webContext?: WebObservation[];
     /** Present only for a group-scene turn; private-message privacy remains unchanged. */
@@ -676,6 +770,9 @@ export interface NarrativeRequest {
     workingDetails?: WorkingDetail[];
     /** Older moments semantically related to the current message; private live turns only. */
     recalledHistory?: RecalledMoment[];
+    /** Deterministic M4 continuation scaffold; the model cannot directly rewrite it. */
+    sceneFrame?: SceneFrame;
+    dialogueBurst?: DialogueBurstState;
 }
 export interface UserReportedTime {
     localTime: string;
@@ -695,6 +792,8 @@ export interface TimelinePlan {
     carry?: string[];
 }
 export interface TimelinePlanRequest {
+    recalledHistory?: RecalledMoment[];
+    contactThreads?: import('./script/knowledge-evidence').ContactEvidenceThread[];
     story: InterludeStory;
     participant: InterludeParticipant | null;
     phase: Extract<NarrativePhase, 'advance' | 'conversation-follow-up' | 'intent-due'>;
@@ -703,6 +802,14 @@ export interface TimelinePlanRequest {
     scene: InterludeScene | null;
     facts: NarrativeFact[];
     recentEntries: ScriptEntry[];
+    /** The latest visible original script in full. It is a continuity handoff
+     * for the temporal editor; an accompanying host ledger remains authoritative
+     * whenever this script rendered an automatic window. */
+    recentScriptContinuation?: {
+        content: string;
+        occurredAt: Date;
+        hostTimelineLedger?: string;
+    } | null;
     dueIntents: NarrativeIntent[];
     schedulePreplan?: SchedulePreplanWindow | null;
 }
@@ -711,6 +818,8 @@ export interface RecalledMoment {
     id: number;
     occurredAt: string;
     content: string;
+    /** Consecutive immutable script rows included around the matched anchor. */
+    sourceEntryIds?: number[];
 }
 export interface GroupMessageContext {
     senderId: string;
@@ -766,11 +875,15 @@ export interface CompactionRequest {
     entries: ScriptEntry[];
     scene: InterludeScene | null;
     arc: InterludeArc | null;
+    /** Original text before the incremental checkpoint; context, not new evidence. */
+    precedingEntries?: ScriptEntry[];
+    developmentCandidates?: StatePatchProposal[];
     participants: InterludeParticipant[];
     facts: NarrativeFact[];
     schedulePreplan?: SchedulePreplanReviewRequest;
 }
 export interface FactDraft {
+    knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     scope: NarrativeFact['scope'];
     participantId?: string;
     content: string;
@@ -782,6 +895,11 @@ export interface FactDraft {
     resolvesFactIds?: number[];
 }
 export interface StatePatchDraft {
+    interactionReview?: {
+        outcome: 'supported' | 'contested' | 'unresolved';
+        feedbackEntryIds: number[];
+        responseEntryIds: number[];
+    };
     target: StatePatchTarget;
     participantId?: string;
     path: string;
@@ -790,6 +908,8 @@ export interface StatePatchDraft {
     confidence?: number;
     impact?: 'minor' | 'major';
     sourceEntryIds?: number[];
+    /** Explicit counter-evidence for an existing, still provisional candidate. */
+    contradictsProposalIds?: number[];
 }
 export interface ScenePresenceDraft {
     name: string;
@@ -798,10 +918,24 @@ export interface ScenePresenceDraft {
     sourceEntryIds: number[];
 }
 export interface CompactionDecision {
+    episodeTags?: Array<{
+        sourceEntryId: number;
+        people?: string[];
+        places?: string[];
+        objects?: string[];
+        topics?: string[];
+        commitments?: string[];
+        outcomes?: string[];
+        dates?: string[];
+    }>;
     scene?: {
         hook?: string;
         summary?: string;
         close?: boolean;
+        boundary?: {
+            reason: string;
+            sourceEntryIds: number[];
+        };
         presence?: ScenePresenceDraft[];
     };
     arc?: {
@@ -814,8 +948,12 @@ export interface CompactionDecision {
     schedulePreplan?: SchedulePreplanProposal;
 }
 export interface WorkingDetailDraft {
+    /** Explicit rename of the same evidenced matter; never fuzzy deduplication. */
+    replacesLabel?: string;
+    knowledge?: import('./script/knowledge-evidence').KnowledgeEvidence;
     label: string;
     value: string;
+    resolved?: boolean;
     expiresAt?: string;
     sourceEntryIds?: number[];
 }
@@ -844,6 +982,7 @@ export interface NarrativeCompactor {
     planTimeline?(request: TimelinePlanRequest): Promise<TimelinePlan | undefined>;
 }
 export interface NarrativeEmbedder {
+    identity?(): string;
     embed(input: string): Promise<number[]>;
 }
 export interface AlterSystemState {
@@ -852,6 +991,10 @@ export interface AlterSystemState {
     lastTriggerDirection: -1 | 0 | 1;
     emotionalOffset: EmotionalOffset | null;
     history: AlterHistoryEntry[];
+    /** Separate pending movement by relationship/global source. The visible
+     * offset remains story-level, while its side analysis only sees evidence
+     * that actually contributed to the triggering bucket. */
+    pendingScopes?: AlterPendingScope[];
     lastUpdatedAt: string;
     lastAnalysisAttemptAt?: string;
 }
@@ -870,6 +1013,43 @@ export interface AlterHistoryEntry {
     alter: number;
     alterValue: number;
     timestamp: string;
+    /** Empty means the protagonist's own/global life script. */
+    participantId?: string;
+}
+export interface AlterPendingScope {
+    participantId: string;
+    alterValue: number;
+    lastAnalysisAttemptAt?: string;
+}
+/** 宿主从已投递回复中提取的单轮表达节奏签名。 */
+export interface RhythmSignature {
+    bubbles: number;
+    shape: Array<'s' | 'm' | 'l' | 'xl'>;
+    tail: 'question' | 'imperative' | 'statement' | 'word';
+    totalChars: number;
+    occurredAt: string;
+}
+/** 连续同构节奏的定型状态；streak 驱动注入强度阶梯。 */
+export interface CollapsedRhythm {
+    templateKey: string;
+    reason: 'same-structure' | 'tail-repeat' | 'length-box';
+    streak: number;
+}
+export interface ChatRhythmState {
+    recent: RhythmSignature[];
+    collapsed?: CollapsedRhythm;
+    exhausted?: boolean;
+    lastDirectiveLevel?: 1 | 2 | 3;
+    updatedAt: string;
+}
+/** Deprecated configuration shape, accepted only for existing installations. */
+export interface ChatRhythmConfig {
+    enabled: boolean;
+    /** 检测策略档位：gentle 仅结构同构；balanced 增加尾段复读与字数箱体；aggressive 收紧样本要求。 */
+    mode: 'gentle' | 'balanced' | 'aggressive';
+    historyLimit: number;
+    collapseMinSamples: number;
+    exhaustLimit: number;
 }
 export interface AlterAnalysisRequest {
     characterName: string;

@@ -31,6 +31,10 @@ export function registerTables(ctx: Context) {
   // parent context. Do not rebuild those schemas on reload, but keep adding
   // genuinely new tables introduced by later releases.
   if (existingTables.interlude_story) {
+    registerScriptEntryEmbedding(ctx, existingTables)
+    if (existingTables.interlude_fact && !existingTables.interlude_fact.fields?.knowledge) {
+      ctx.model.extend('interlude_fact', { knowledge: 'json' })
+    }
     if (!existingTables.interlude_web_observation) registerWebObservationTable(ctx)
     if (!existingTables.interlude_overlay_snapshot) registerOverlaySnapshotTable(ctx)
     if (!existingTables.interlude_sticker) registerStickerTable(ctx)
@@ -57,7 +61,7 @@ export function registerTables(ctx: Context) {
   // 这是事实来源。场景、事实与状态变化都可以回溯到这些不可变的原始条目。
   ctx.model.extend('interlude_script_entry', {
     id: 'unsigned', storyId: 'string(255)', participantId: 'string(255)', kind: 'string(32)', actor: 'string(32)',
-    content: 'text', occurredAt: 'timestamp', metadata: 'json', createdAt: 'timestamp',
+    content: 'text', occurredAt: 'timestamp', metadata: 'json', embedding: 'json', createdAt: 'timestamp',
   }, { primary: 'id', autoInc: true, indexes: ['storyId', 'occurredAt'] })
 
   ctx.model.extend('interlude_memory', {
@@ -88,6 +92,7 @@ export function registerTables(ctx: Context) {
 
   // 长期事实按重要度与置信度检索，并保留来源条目供审计或重建。
   ctx.model.extend('interlude_fact', {
+    knowledge: 'json',
     id: 'unsigned', storyId: 'string(255)', participantId: 'string(255)', scope: 'string(32)', content: 'text',
     importance: 'double', confidence: 'double', unresolved: 'boolean', embedding: 'json', status: 'string(16)', sourceEntryIds: 'json',
     lastSeenAt: 'timestamp', createdAt: 'timestamp', updatedAt: 'timestamp',
@@ -104,6 +109,11 @@ export function registerTables(ctx: Context) {
   registerOverlaySnapshotTable(ctx)
   registerStickerTable(ctx)
   registerSchedulePreplanTable(ctx)
+}
+
+function registerScriptEntryEmbedding(ctx: Context, tables = (ctx.model as any).tables ?? {}) {
+  if (tables.interlude_script_entry?.fields?.embedding) return
+  ctx.model.extend('interlude_script_entry', { embedding: 'json' })
 }
 
 /** Kept separately so an upgrade can register only this new table without

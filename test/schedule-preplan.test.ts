@@ -138,7 +138,7 @@ test('prompt payload exposes Schedule Preplan as planned structure separate from
     schedulePreplan: schedulePreplanWindow(record(), now, 'Asia/Shanghai', 12),
   }
   const payload = toPromptPayload(request) as any
-  assert.equal(payload.schedulePreplan.plannedNotObserved, true)
-  assert.equal(payload.state.schedulePreplan, undefined)
-  assert.ok(payload.schedulePreplan.blocks.length <= 8)
+  assert.equal(payload.availableNearFuture.schedulePreplan.plannedNotObserved, true)
+  assert.equal(payload.ongoingThreads.state.schedulePreplan, undefined)
+  assert.ok(payload.availableNearFuture.schedulePreplan.blocks.length <= 8)
 })
