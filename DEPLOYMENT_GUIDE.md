@@ -1,5 +1,7 @@
 # HDS Interlude 部署教程
 
+Linux 服务器、NapCat Shell 与 Koishi 同机部署，请看 [Linux 部署指南](LINUX_DEPLOYMENT_GUIDE.md)。
+
 适用版本：`1.0.1-beta6-rebuild`
 
 > 写给第一次把 HDSI 接到 QQ 上、并希望角色能长期生活下去的人。
