@@ -197,6 +197,7 @@ function normalizeProvider(provider: ProviderConfig): ProviderConfig {
 }
 
 function presetEndpoint(mode: ProviderMode | undefined, dashscopeRegion?: string) {
+  if (mode === 'minimax-anthropic') return 'https://api.minimax.cn/anthropic/v1/messages'
   if (mode === 'zhipu-official') return ZHIPU_OFFICIAL_CHAT_ENDPOINT
   if (mode === 'openai-official') return 'https://api.openai.com/v1/chat/completions'
   if (mode === 'deepseek-official') return 'https://api.deepseek.com/v1/chat/completions'

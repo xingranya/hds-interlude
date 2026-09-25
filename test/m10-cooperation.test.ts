@@ -55,6 +55,7 @@ test('writing affordances follow transport and browsing switches without a manda
   assert.doesNotMatch(disabled, /timing=immediate|<sep\//)
   const deferred = writingAffordances({ messageSeparator: '||', splitReplyMessages: true, browserMode: 'deferred-only' })
   assert.match(deferred, /"\|\|"/)
+  assert.match(deferred, /one or two short spoken sentences/)
   assert.match(deferred, /timing=deferred/)
   assert.doesNotMatch(deferred, /timing=immediate/)
   assert.match(writingAffordances({ messageSeparator: '<sep/>', splitReplyMessages: true, browserMode: 'allow-immediate' }), /timing=immediate/)

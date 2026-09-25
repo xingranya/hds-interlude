@@ -128,3 +128,38 @@ test('platform references resolve the exact action segment and reject absent act
   assert.equal(platformActionReference(value, 42, 'message-reaction', 'group-message:7:heart')?.segmentIndex, 2)
   assert.equal(platformActionReference(value, 42, 'local-media', 'missing'), undefined)
 })
+
+test('proactive sticker sends only after its whitelisted text is delivered', async () => {
+  const story = { id: 'story:1' } as any
+  const reference = { commitId: 'commit:1', eventId: 'event:1', scriptEntryId: 42, segmentIndex: 0 }
+  const message = { participantId: 'onebot:3551827003:1935220968', content: '给你看只小猫',
+    localSticker: { assetId: 'sticker:cat', reference } }
+  const participant = { id: message.participantId, platform: 'onebot', channelId: 'private:1935220968' }
+  const sent: any[] = []
+  const outcomes: any[] = []
+  let textDelivered = false
+  const service: any = {
+    sendOutgoingMessages: async () => textDelivered ? [message] : [],
+    confirmOutgoingDeliveries: async () => undefined,
+    getParticipant: async () => participant,
+    canHandleParticipant: () => true,
+    findBotForParticipant: () => ({ sendMessage: async () => undefined }),
+    stickerById: new Map([['sticker:cat', { assetId: 'sticker:cat' }]]),
+    sendSticker: async (...args: any[]) => { sent.push(args); return true },
+    recordPlatformDeliveryOutcome: async (...args: any[]) => outcomes.push(args),
+  }
+  await (InterludeService.prototype as any).sendScheduledMessages.call(service, story, [message])
+  assert.equal(sent.length, 0)
+  assert.equal(outcomes[0][2], 'cancelled')
+  textDelivered = true
+  outcomes.length = 0
+  await (InterludeService.prototype as any).sendScheduledMessages.call(service, story, [message])
+  assert.equal(sent.length, 1)
+  assert.equal(sent[0][2], 'private:1935220968')
+  assert.equal(sent[0][5], reference)
+  assert.equal(outcomes.length, 0)
+  service.canHandleParticipant = () => false
+  await (InterludeService.prototype as any).sendScheduledMessages.call(service, story, [message])
+  assert.equal(sent.length, 1)
+  assert.equal(outcomes[0][2], 'failed')
+})

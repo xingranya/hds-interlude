@@ -514,6 +514,8 @@ export interface IntentUpdateDraft {
 export interface OutgoingMessageDraft {
   participantId: string
   content: string
+  /** Optional sticker accompanying a confirmed background text delivery. */
+  localSticker?: { assetId: string; reference?: import('./script/delivery-ledger').ScriptDeliveryReference }
   /** Attached only to no-current-user background deliveries. */
   automaticDelivery?: Pick<AutomaticDeliverySummary, 'summary' | 'sourceEntryId'>
   /** The visible reply contract is recorded only after transport succeeds. */
@@ -558,6 +560,8 @@ export interface ConversationActionDraft {
   willingness?: number
   /** Short audit note explaining the concrete reason for this contact. */
   reason?: string
+  /** A sticker sent with this one approved immediate contact. */
+  localMedia?: LocalMediaDraft
 }
 
 export type InteractionReplyMode = 'none' | 'immediate' | 'delayed'

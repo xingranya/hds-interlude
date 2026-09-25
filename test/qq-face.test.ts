@@ -8,6 +8,7 @@ test('known QQ system faces are translated into stable incoming semantics', () =
   assert.equal(qqNativeFaceName('182'), '笑哭')
   assert.equal(qqNativeFaceName('427'), '偷感')
   assert.equal(normalizeQQNativeFaceSegments('<face id="427" platform="onebot"></face>'), '[QQ 原生表情：偷感（ID: 427）]')
+  assert.equal(normalizeQQNativeFaceSegments('<face id="324"/></face>'), '[QQ 原生表情：吃糖（ID: 324）]')
   assert.equal(normalizeQQNativeFaceSegments('好吧[CQ:face,id=182]'), '好吧[QQ 原生表情：笑哭（ID: 182）]')
 })
 

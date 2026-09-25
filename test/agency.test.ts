@@ -4,7 +4,7 @@ import {
   activeAgencyWindow, evaluateAgencyCapacity, normalizeAgencyWindowDraft, normalizeProactiveContact,
   proactiveCandidateFingerprint, proactiveRecheckAt, resolveAgencyConfig,
 } from '../src/agency'
-import { groupDueIntents } from '../src/service'
+import { groupDueIntents, normalizeDecision } from '../src/service'
 import { AgencyWindowState, NarrativeIntent, ProactiveContactDraft } from '../src/types'
 
 const config = resolveAgencyConfig({
@@ -82,4 +82,21 @@ test('proactive checks are isolated from ordinary due messages for the same part
   const batches = groupDueIntents([intent(1, 'delayed-reply'), intent(2, 'proactive-check')])
   assert.equal(batches.length, 2)
   assert.deepEqual(batches.map(batch => batch[0].type).sort(), ['delayed-reply', 'proactive-check'])
+})
+
+test('background contact can reach only a permitted participant while live cross-chat remains off', () => {
+  const runtime = { maxScriptCharacters: 8000, maxMessageCharacters: 2000, allowProactiveMessages: true,
+    proactiveWillingnessThreshold: 0.4, messageSeparator: '<sep/>' } as any
+  const shared = { allowCrossConversationMessages: false, maxCrossConversationActions: 1 } as any
+  const raw = { script: '她决定联系小星。', crossConversationActions: [
+    { participantId: 'allowed', mode: 'immediate' as const, content: '在吗', willingness: 0.8,
+      localMedia: { assetId: 'cat', willingness: 0.9 } },
+    { participantId: 'blocked', mode: 'immediate' as const, content: '不该发送', willingness: 1 },
+  ] }
+  const advance = normalizeDecision(raw, now, now, true, runtime, shared, '', new Set(['allowed']), 'advance')
+  assert.equal(advance.crossConversationActions.length, 1)
+  assert.equal(advance.crossConversationActions[0].participantId, 'allowed')
+  assert.equal(advance.crossConversationActions[0].localMedia?.assetId, 'cat')
+  const live = normalizeDecision(raw, now, now, true, runtime, shared, 'other', new Set(['allowed', 'other']), 'user-message')
+  assert.deepEqual(live.crossConversationActions, [])
 })

@@ -51,4 +51,5 @@ export function normalizeQQNativeFaceSegments(content: unknown) {
       const name = attributeValue(attributes, 'summary') || attributeValue(attributes, 'name')
       return name ? `[QQ 商城表情：${name}]` : '[QQ 商城表情]'
     })
+    .replace(/<\/(?:face|mface)>/gi, '')
 }

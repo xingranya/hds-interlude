@@ -57,3 +57,23 @@ test('an absent or ambiguous prose action is diagnostic and keeps compatibility 
   assert.equal(findOutgoingScriptEvent(commit, 'alice')?.content, '知道了')
   assert.deepEqual(validateScriptCommit(commit), { valid: true, errors: [] })
 })
+
+test('a proactive sticker is attached to its approved private contact', () => {
+  const commit = legacyDecisionToScriptCommit({
+    storyId: 'story-3', participantId: '', phase: 'advance',
+    from: new Date('2026-09-25T12:00:00.000Z'), now: new Date('2026-09-25T12:01:00.000Z'),
+    frameId: 'frame:three', burstId: 'burst:three',
+    decision: {
+      script: '她想起小星，发了句“刚看到一只小猫”，又发了一张猫猫表情包。',
+      crossConversationActions: [{ participantId: 'onebot:3551827003:1935220968', mode: 'immediate',
+        content: '刚看到一只小猫', willingness: 0.9,
+        localMedia: { assetId: 'sticker:cat', placement: 'after-text', willingness: 0.9 } }],
+    },
+  })
+  const text = findOutgoingScriptEvent(commit, 'onebot:3551827003:1935220968', 'immediate', '刚看到一只小猫')
+  const image = commit.events.find(event => event.kind === 'platform-action' && event.metadata?.localMedia)
+  assert.ok(text)
+  assert.equal(image?.participantId, 'onebot:3551827003:1935220968')
+  assert.equal(image?.metadata?.localMedia?.assetId, 'sticker:cat')
+  assert.deepEqual(validateScriptCommit(commit), { valid: true, errors: [] })
+})

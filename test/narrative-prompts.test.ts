@@ -69,16 +69,16 @@ test('each request includes only its current phase strategy', () => {
   const due = systemPrompt('intent-due', '', '', '', '', '', false, false)
   assert.match(user, /CURRENT PHASE: USER MESSAGE/)
   assert.match(user, /SCRIPT-FIRST TRANSPORT MIRROR/)
-  assert.match(user, /For this private turn, return interaction/)
+  assert.match(user, /For an immediate send, return interaction/)
   assert.doesNotMatch(user, /return groupReply as/)
   assert.doesNotMatch(user, /INDEPENDENT LIFE ADVANCE/)
   assert.match(advance, /CURRENT PHASE: INDEPENDENT LIFE ADVANCE/)
   assert.match(advance, /This independent-life phase has no current reply channel/)
-  assert.doesNotMatch(advance, /For this private turn, return interaction/)
+  assert.doesNotMatch(advance, /For an immediate send, return interaction/)
   assert.doesNotMatch(advance, /interruptedOutgoingDrafts/)
   assert.match(followUp, /place its exact words at the sending action in script/)
   assert.match(due, /CURRENT PHASE: DUE INTENT/)
-  assert.match(due, /For this private turn, return interaction/)
+  assert.match(due, /For an immediate send, return interaction/)
 })
 
 test('private interaction protocol is neutral about reading and explicit about read-but-silent', () => {
@@ -86,16 +86,17 @@ test('private interaction protocol is neutral about reading and explicit about r
   // 协议示例不得用字面 false 充当默认值（弱指令模型会照抄示例值）。
   assert.doesNotMatch(user, /interaction as \{"seen":false/)
   assert.match(user, /"seen":<true\|false>/)
-  assert.match(user, /seen and reply are independent fields/)
-  // 已读不回是明确合法的普通状态。
-  assert.match(user, /seen=true with reply\.mode=none is the ordinary read-but-does-not-answer state/)
-  // 无 say 标记时允许 content 直传，堵住"只教 actionId"的静默丢弃悬崖。
-  assert.match(user, /supply reply\.content directly instead of an id/)
+  assert.match(user, /seen records only whether she reads the current message/)
+  assert.match(user, /"mode":"none"/)
+  assert.match(user, /reply\.content must mirror the words sent in script/)
+  assert.match(user, /Use actionId only when script contains a matching/)
+  assert.match(user, /do not invent a new user reply/)
+  assert.match(user, /a brief answer is the normal course/)
   // 未读计数是客观到达记录，不是注意力或义务。
   assert.match(user, /unreadMessageCount is the registered count of arrived messages not yet marked read/)
   // 跟进/到期回合：seen=false 不得再暗示回复必须为 none。
   const followUp = systemPrompt('conversation-follow-up', '', '', '', '', '', false, false)
-  assert.match(followUp, /reply may still be immediate or delayed when a message is genuinely sent now/)
+  assert.match(followUp, /On a no-message turn, seen is false/)
 })
 
 test('a missing visible-reply structure triggers a fresh-output recovery instruction', () => {
@@ -160,7 +161,7 @@ test('native face expressions require semantic intent and an explicit threshold'
   })
   assert.match(prompt, /nativeFace/)
   assert.match(prompt, /willingness/)
-  assert.match(prompt, /reaches 0.7/)
+  assert.match(prompt, /reach 0.7/)
   assert.match(prompt, /Do not write bracketed face labels/)
 })
 
@@ -171,10 +172,13 @@ test('legacy bracket faces are projected as expression semantics for protagonist
 
 test('local sticker catalog is conditional and only permits exact listed assets', () => {
   const absent = systemPrompt('user-message', '', '', '', '', '')
-  const enabled = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, [
-    { assetId: 'laugh/dog', group: 'laugh', description: '金毛躺平，表示摆烂。', aliases: ['躺平'], animated: true },
-  ])
+  const catalog = [{ assetId: 'laugh/dog', group: 'laugh', description: '金毛躺平，表示摆烂。', aliases: ['躺平'], animated: true }]
+  const enabled = systemPrompt('user-message', '', '', '', '', '', false, false, false, false, false, undefined, false, catalog)
+  const advance = systemPrompt('advance', '', '', '', '', '', false, false, false, false, false, undefined, false, catalog)
+  const due = systemPrompt('intent-due', '', '', '', '', '', false, false, false, false, false, undefined, false, catalog)
   assert.doesNotMatch(absent, /CURRENT LOCAL STICKER LIBRARY/)
   assert.match(enabled, /CURRENT LOCAL STICKER LIBRARY/)
   assert.match(enabled, /at most one exact listed sticker/)
+  assert.match(advance, /localMedia inside its matching crossConversationAction/)
+  assert.match(due, /top-level localMedia/)
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { systemPrompt, toPromptPayload } from '../src/narrator'
-import { calibratedNativeFaceWillingness, describeQuotedMessage, formatGroupSpeaker, InterludeService, normalizeAllowedReactions, normalizeGroupChatActions, normalizeQuotedMessageContent } from '../src/service'
+import { calibratedNativeFaceWillingness, describeQuotedMessage, formatGroupSpeaker, InterludeService, nativeFaceForIncomingQQFace, normalizeAllowedReactions, normalizeGroupChatActions, normalizeQuotedMessageContent } from '../src/service'
 import { ChatActionCapabilities, emptyStorySetting, emptyStoryState, GroupContext, InterludeStory, NarrativeDecision, NarrativeRequest } from '../src/types'
 
 test('group speaker labels retain both display name and stable QQ identity', () => {
@@ -48,6 +48,15 @@ test('native-face threshold is calibrated against reply meaning instead of a mod
   assert.ok(calibratedNativeFaceWillingness('sweat', 1, '你还好意思问咋了') < 0.95)
   assert.ok(calibratedNativeFaceWillingness('laugh', 1, '哈哈哈你也太离谱了') < 0.95)
   assert.ok(calibratedNativeFaceWillingness('laugh', 1, '哈哈哈你也太离谱了') >= 0.7)
+})
+
+test('a short playful reply to an incoming QQ face may include a matching native face', () => {
+  const capabilities: ChatActionCapabilities = { platform: 'qq', quoteReply: false, reactions: [],
+    nativeFaces: ['smile', 'laugh', 'sweat', 'awkward'], expressionThreshold: 0.7 }
+  assert.equal(nativeFaceForIncomingQQFace('[QQ 原生表情：吃糖（ID: 324）]</face>', '嘿嘿', capabilities), 'smile')
+  assert.equal(nativeFaceForIncomingQQFace('今晚吃什么', '嘿嘿', capabilities), undefined)
+  assert.equal(nativeFaceForIncomingQQFace('[QQ 原生表情：吃糖（ID: 324）]', '我不想发', capabilities), undefined)
+  assert.equal(nativeFaceForIncomingQQFace('发个QQ小表情给我', '好呀', capabilities), 'smile')
 })
 
 test('prompt payload hides message references until chat capabilities are active', () => {

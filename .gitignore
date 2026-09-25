@@ -14,6 +14,7 @@ cache/
 temp/
 secrets.*
 credentials.*
+/模型.md
 *.pem
 *.key
 *.p12

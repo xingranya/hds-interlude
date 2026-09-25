@@ -76,6 +76,11 @@ export function decisionToScriptCommit(input: ScriptFirstDecisionInput): ScriptC
       prose,
       actions: input.decision.authoredActions,
     })
+    if (action.mode === 'immediate' && action.localMedia?.assetId) add({
+      kind: 'platform-action', actor: 'protagonist', occurredAt: input.now.toISOString(),
+      causedByEventIds: [narrative.eventId], participantId: action.participantId,
+      metadata: { localMedia: action.localMedia },
+    })
   }
   if (input.groupReplyContent) {
     const bubbles = splitBubbles(input.groupReplyContent, input.messageSeparator, input.splitReplyMessages)

@@ -42,7 +42,7 @@ const defaultProvider: ProviderConfig = {
 const ProviderIdentity = Schema.object({
   label: Schema.string().default('Primary model').description('连接名称。'),
   enabled: Schema.boolean().default(true).description('启用此连接。'),
-  mode: Schema.union(['openai-compatible', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
+  mode: Schema.union(['openai-compatible', 'minimax-anthropic', 'zhipu-official', 'openai-official', 'deepseek-official', 'moonshot-official', 'dashscope-official', 'siliconflow-official', 'openrouter', 'gemini-openai']).default('openai-compatible').description('接口预设；重载后显示对应字段。'),
 })
 
 const ProviderAssignments = Schema.object({
@@ -75,6 +75,11 @@ const Provider: Schema<ProviderConfig> = Schema.intersect([
       model: Schema.string().default('').description('模型名。'),
       extraHeaders: Schema.string().role('textarea').default('').description('额外请求头 JSON（可留空）。'),
       extraBody: Schema.string().role('textarea').default('').description('额外请求体 JSON（可留空）。'),
+    }),
+    Schema.object({
+      mode: Schema.const('minimax-anthropic'),
+      apiKey: Schema.string().role('secret').default('').description('MiniMax API Key；使用国内 Anthropic 兼容 Messages 地址。'),
+      model: Schema.string().default('MiniMax-M3').description('MiniMax 模型代码。'),
     }),
     Schema.object({
       mode: Schema.const('zhipu-official'),

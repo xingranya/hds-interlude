@@ -55,7 +55,7 @@ import {
   BrowserIntentDraft, NarrativeAudio, NarrativeImage, OverlaySnapshot, WebObservation, emptyParticipantState,
   AlterSystemState, AlterSystemConfig, EmotionalOffsetPrompt, ChatRhythmConfig,
   AgencyConfig, AgencyWindowState, ProactiveContactDraft, AutomaticDeliverySummary, ScenePresenceDraft, ScenePresenceState,
-  ChatActionCapabilities, ChatReactionName, FollowUpCommitmentDraft, FollowUpResolutionDraft, LocalMediaDraft, MessageReactionDraft, NativeFaceSemantic, StickerAsset, StickerCatalogEntry,
+  ChatActionCapabilities, ChatReactionName, ConversationActionDraft, FollowUpCommitmentDraft, FollowUpResolutionDraft, LocalMediaDraft, MessageReactionDraft, NativeFaceSemantic, StickerAsset, StickerCatalogEntry,
   EarlyNarrativeReply, IndexedQuotedMessageContext, QuotedMessageContext, SchedulePreplanRecord, SchedulePreplanReviewRequest,
   PreviousSceneSummary, RecalledMoment, WorkingDetail, TimelinePlan, TimelinePlanRequest, UserReportedTime,
   DialogueBurstState, SceneFrame,
@@ -220,7 +220,6 @@ const TIMELINE_RETRY_BACKOFF_BASE = 10 * Time.minute
 const TIMELINE_DIRECTOR_FUSE = 6
 /** 熔断后的冷却：期间不再尝试时间导演，到期后自动解除熔断重试一次。 */
 const TIMELINE_DIRECTOR_FUSE_COOLDOWN = 2 * Time.hour
-const STICKER_DESCRIPTION_RETRY_COOLDOWN = 30 * Time.minute
 
 interface PreparedCompactionSkip {
   phase: 'skip'
@@ -2058,7 +2057,7 @@ export class InterludeService extends Service {
 
   private async sendSticker(
     story: InterludeStory,
-    session: Session,
+    session: Pick<Session, 'bot' | 'platform'>,
     channelId: string,
     asset: StickerAsset,
     groupId?: string,
@@ -2322,7 +2321,7 @@ export class InterludeService extends Service {
           const hash = createHash('sha256').update(bytes).digest('hex')
           const prior = byPath.get(filePath)
           if (prior?.hash === hash && prior.status === 'active') continue
-          if (prior?.hash === hash && prior.status === 'pending' && Date.now() - prior.updatedAt.getTime() < STICKER_DESCRIPTION_RETRY_COOLDOWN) continue
+          // 未处理的批次和描述失败的素材都保持 pending；下次扫描可继续处理。
           const group = filePath.includes('/') ? filePath.split('/')[0] : 'default'
           const assetId = stableStickerAssetId(filePath, hash)
           const now = new Date()
@@ -2346,7 +2345,7 @@ export class InterludeService extends Service {
       if (pending.length && !this.stickerDescriber.available()) {
         this.reportStandalone('warn', '表情包库发现新素材，但没有配置 useForStickers 的视觉模型；已等待描述。')
       }
-      for (const item of pending.slice(0, 5)) {
+      for (const item of pending.slice(0, 16)) {
         if (!this.stickerDescriber.available()) break
         let description: StickerDescription | undefined
         try {
@@ -2409,7 +2408,7 @@ export class InterludeService extends Service {
 
   private async stickerCatalogForSession(session: Session | undefined, turnQueryEmbedding?: number[]): Promise<StickerCatalogEntry[]> {
     const config = this.stickerConfig
-    if (!config.enabled || !session || !isOneBotPlatform(session.platform)) return []
+    if (!config.enabled || session && !isOneBotPlatform(session.platform)) return []
     const assets = await this.rankStickerAssets(turnQueryEmbedding)
     return assets.map(asset => ({
       assetId: asset.assetId, group: asset.group, description: asset.description, aliases: Array.isArray(asset.aliases) ? asset.aliases : [], animated: asset.animated,
@@ -3020,6 +3019,9 @@ export class InterludeService extends Service {
         : narrative.decision
       const sticker = this.resolveSticker(decision.localMedia, stickerCatalog)
       const nativeFace = sticker ? undefined : this.resolveNativeFace(decision, chatCapabilities)
+        ?? (decision.nativeFace || decision.interaction?.reply.mode !== 'immediate'
+          ? undefined
+          : nativeFaceForIncomingQQFace(userMessage, decision.interaction.reply.content, chatCapabilities))
 
       const result = await this.serial(turn.storyId, async () => {
         if (this.databaseResetting) return {
@@ -3064,7 +3066,7 @@ export class InterludeService extends Service {
         const persisted = await this.persistDecision(current, currentParticipant, {
           ...decision,
           localMedia: sticker ? decision.localMedia : undefined,
-          nativeFace: nativeFace ? decision.nativeFace : undefined,
+          nativeFace: nativeFace ? decision.nativeFace ?? { semantic: nativeFace, willingness: 0.85 } : undefined,
         }, snapshot.from, effectiveNow, true, 'user-message', [], early.delivered)
         if (early.deliveryEntry && persisted.commit && decision.interaction?.reply.content) {
           const event = findOutgoingScriptEvent(
@@ -3112,7 +3114,7 @@ export class InterludeService extends Service {
             platformActionReference(result.commit, result.scriptEntry?.id, 'local-media', sticker.assetId),
           )
         }
-        if (nativeFace && turn.latestSession) {
+        if (nativeFace && turn.latestSession && delivered.length) {
           await this.sendNativeFace(
             snapshot.story,
             turn.latestSession,
@@ -3148,6 +3150,7 @@ export class InterludeService extends Service {
 
   /** Used by commands/tests to deliver a mixed set of account-targeted actions safely. */
   async deliverMessages(story: InterludeStory, messages: OutgoingMessageDraft[], session?: Session) {
+    if (!session) return this.sendScheduledMessages(story, messages)
     const participant = session ? await this.findParticipant(session, story) : undefined
     const delivered = await this.sendOutgoingMessages(story, messages, participant, session)
     await this.confirmOutgoingDeliveries(story, delivered)
@@ -3541,7 +3544,7 @@ export class InterludeService extends Service {
       : undefined
     const developmentTendencies = memoryEnabled
       ? await this.developmentForPrompt(story.id, participant?.id, developmentContextQuery(userMessage, visibleDueIntents.map(intent => intent.summary), promptEntries)) : []
-    return resolveAuthoredActions(await this.narrator.decide({
+    const decision = resolveAuthoredActions(await this.narrator.decide({
       urgeEnabled: this.urgeConfig.enabled && !dueIntents.some(intent => intent.type === 'narrative-retry'),
       phase, refreshContinuity, outputRecovery, story, from, now, userMessage, userReportedTimes, images, audio, visualObservations, timelinePlan, developmentTendencies,
       writingOptions: {
@@ -3584,7 +3587,7 @@ export class InterludeService extends Service {
         ? new Date(now.getTime() - Math.min(this.config.runtime.contextTimeWindowMinutes ?? 60, 1_440) * Time.minute)
         : undefined,
       ...(quotedMessages.length ? { quotedMessages } : {}),
-      ...(stickerCatalog.length && phase === 'user-message' ? { stickerCatalog } : {}),
+      ...(stickerCatalog.length && !groupContext ? { stickerCatalog } : {}),
       webContext: mergedWebContext, overlaySnapshots,
       alterEnabled: this.alterSystemConfig.enabled,
       emotionalOffset: this.emotionalOffsetForPrompt(story),
@@ -3597,6 +3600,13 @@ export class InterludeService extends Service {
       schedulePreplan: schedulePreplanWindow(scheduleRecord, now, story.setting.timezone, 12, this.schedulePreplanConfig),
       onEarlyReply,
     }), false, this.config.runtime.messageSeparator)
+    if (phase !== 'user-message' || !participant || groupContext) return decision
+    const authored = recoverAuthoredPrivateSend(decision, this.config.runtime)
+    const recovered = recoverQuotedPrivateSend(authored, userMessage, this.config.runtime)
+    if (recovered !== decision) this.reportOperation('standard', 'warn', story, phase, '已从本回合单一明确发送动作恢复结构化私聊回复')
+    const withSticker = recoverClaimedSticker(recovered, stickerCatalog)
+    if (withSticker !== recovered) this.reportOperation('standard', 'warn', story, phase, '已从本回合唯一匹配的素材描述恢复表情包动作')
+    return withSticker
   }
 
   /** Refresh continuity only on the first automatic pass or every fifteenth
@@ -3718,6 +3728,8 @@ export class InterludeService extends Service {
   }
 
   private async tryDecide(story: InterludeStory, participant: InterludeParticipant | null, phase: NarrativeRequest['phase'], from: Date, now: Date, userMessage: string | undefined, dueIntents: NarrativeIntent[], supersededIntents: NarrativeIntent[] = [], groupContext?: GroupContext, images: NarrativeImage[] = [], audio: NarrativeAudio[] = [], chatCapabilities?: ChatActionCapabilities, quotedMessages: IndexedQuotedMessageContext[] = [], stickerCatalog: StickerCatalogEntry[] = [], turnQueryEmbedding?: number[], visualObservations?: string[], onEarlyReply?: (reply: EarlyNarrativeReply) => Promise<boolean>) {
+    if ((phase === 'advance' || phase === 'conversation-follow-up' || phase === 'intent-due')
+      && isOneBotPlatform(story.platform) && this.config.runtime.allowProactiveMessages) stickerCatalog = await this.stickerCatalogForSession(undefined)
     let immediateObservations: WebObservation[] = []
     let effectiveNow = now
     const automaticPhase = phase === 'advance' || phase === 'conversation-follow-up' || phase === 'intent-due'
@@ -3775,7 +3787,12 @@ export class InterludeService extends Service {
         : undefined
       const initialTimeOverflow = detectLiveScriptTimeOverflow(decision.script, phase, from, effectiveNow, story.setting.timezone, endorsedClocks)
       const initialVisibleRecovery = this.modelRouting.main.available && !earlyReplyCommitted && requiresVisibleReplyRecovery(phase, groupContext, decision)
-      if (initialTimeOverflow || initialVisibleRecovery) {
+      const needsStickerRecovery = (draft: NarrativeDecision) => stickerCatalog.length > 0 && scriptClaimsStickerSend(draft.script)
+        && (phase === 'advance'
+          ? !draft.crossConversationActions?.some(action => action.mode === 'immediate' && this.resolveSticker(action.localMedia, stickerCatalog))
+          : !groupContext && !this.resolveSticker(draft.localMedia, stickerCatalog))
+      const initialStickerRecovery = !earlyReplyCommitted && needsStickerRecovery(decision)
+      if (initialTimeOverflow || initialVisibleRecovery || initialStickerRecovery) {
         // 诊断：记录被抛弃草稿里模型实际返回的 interaction（缺失/为空/形状错误），
         // 让下一次"结构化可见回复缺失"可以直接从日志定位是模型行为还是解析问题。
         if (initialVisibleRecovery) {
@@ -3785,6 +3802,8 @@ export class InterludeService extends Service {
         this.reportOperation('standard', 'warn', story, phase,
           initialTimeOverflow
             ? '剧本越过当前时间终点，已抛弃本次未落库剧本并重新写作 原因=%s'
+            : initialStickerRecovery
+              ? '剧本声称发送表情包但缺少真实素材动作，已抛弃并重新写作'
             : '结构化可见回复缺失，已抛弃本次未落库剧本并重新写作',
           ...(initialTimeOverflow ? [initialTimeOverflow] : []))
         decision = await this.decide(story, participant, phase, from, effectiveNow, userMessage, dueIntents, supersededIntents, groupContext, images, audio, immediateObservations, true, chatCapabilities, quotedMessages, stickerCatalog, turnQueryEmbedding, visualObservations, timelinePlan)
@@ -3794,6 +3813,7 @@ export class InterludeService extends Service {
           this.reportOperation('diagnostic', 'warn', story, phase, '恢复尝试仍缺失结构化回复 interaction=%s', safeJsonPreview(decision.interaction))
           throw new Error('Narrative provider omitted the required visible-reply structure after one recovery attempt.')
         }
+        if (needsStickerRecovery(decision)) throw new Error('Narrative provider described an unsent sticker after one recovery attempt.')
       }
       // The fixed narrative contract requires prose for every real model turn.
       // A syntactically valid object with an omitted/blank script used to be
@@ -3884,7 +3904,7 @@ export class InterludeService extends Service {
             ...decision,
             groupReply: raw.groupReply,
             messageReactions: raw.messageReactions,
-            localMedia: raw.localMedia,
+            localMedia: phase === 'advance' ? undefined : raw.localMedia,
             nativeFace: raw.nativeFace,
           } as NarrativeDecision,
           messageSeparator: this.config.runtime.messageSeparator,
@@ -4074,10 +4094,20 @@ export class InterludeService extends Service {
       : undefined
     if (participant && phase === 'user-message' && !isAgencyCheck && interaction?.seen) await this.markParticipantSeen(participant, now)
     if (participant && permitMessages && !immediateReplyAlreadyDelivered && interaction?.reply.mode === 'immediate' && interaction.reply.content) {
+      const sticker = phase !== 'user-message' ? this.resolveSticker(raw.localMedia, this.stickerCatalog) : undefined
       messages.push(attachMessageEvent({
         participantId: participant.id, content: interaction.reply.content, automaticDelivery,
         interaction: interaction ?? null, userInitiated: phase === 'user-message',
+        ...(sticker ? { localSticker: {
+          assetId: sticker.assetId,
+          reference: platformActionReference(commit, scriptEntry?.id, 'local-media', sticker.assetId),
+        } } : {}),
       }, commit ? findOutgoingScriptEvent(commit, participant.id, 'immediate', interaction.reply.content, this.config.runtime.messageSeparator) : undefined, scriptEntry?.id))
+    }
+    if (phase !== 'user-message' && phase !== 'advance' && raw.localMedia?.assetId
+      && !messages.some(message => message.localSticker?.assetId === raw.localMedia?.assetId)) {
+      const reference = platformActionReference(commit, scriptEntry?.id, 'local-media', raw.localMedia.assetId)
+      if (reference) await this.recordPlatformDeliveryOutcome(story.id, reference, 'cancelled', 'background-sticker-not-approved')
     }
     if (participant && permitMessages && interaction?.reply.mode === 'delayed' && interaction.reply.content && interaction.reply.sendAt) {
       const sendAt = new Date(interaction.reply.sendAt)
@@ -4132,9 +4162,14 @@ export class InterludeService extends Service {
     }
     for (const action of crossActions) {
       if (action.mode === 'immediate') {
+        const sticker = this.resolveSticker(action.localMedia, this.stickerCatalog)
         messages.push(attachMessageEvent({
           participantId: action.participantId, content: action.content, automaticDelivery,
           interaction: interaction ?? null, userInitiated: phase === 'user-message',
+          ...(sticker ? { localSticker: {
+            assetId: sticker.assetId,
+            reference: platformActionReference(commit, scriptEntry?.id, 'local-media', sticker.assetId),
+          } } : {}),
         }, commit ? findOutgoingScriptEvent(commit, action.participantId, 'immediate', action.content, this.config.runtime.messageSeparator) : undefined, scriptEntry?.id))
       } else {
         const sendAtValue = (action as { sendAt?: string }).sendAt
@@ -4156,6 +4191,13 @@ export class InterludeService extends Service {
         }, now, action.participantId)
         this.scheduleDueIntentWake(story.id, sendAt)
       }
+    }
+    for (const action of decision.crossConversationActions) {
+      const assetId = action.localMedia?.assetId
+      if (!assetId || crossActions.some(approved => approved.mode === 'immediate' && approved.participantId === action.participantId
+        && approved.localMedia?.assetId === assetId && this.resolveSticker(approved.localMedia, this.stickerCatalog))) continue
+      const reference = platformActionReference(commit, scriptEntry?.id, 'local-media', assetId)
+      if (reference) await this.recordPlatformDeliveryOutcome(story.id, reference, 'cancelled', 'proactive-sticker-not-approved')
     }
 
     // A visible message is confirmed only after transport succeeds. Keep later
@@ -5095,6 +5137,23 @@ export class InterludeService extends Service {
   private async sendScheduledMessages(story: InterludeStory, messages: OutgoingMessageDraft[]) {
     const delivered = await this.sendOutgoingMessages(story, messages)
     await this.confirmOutgoingDeliveries(story, delivered)
+    for (const message of messages) {
+      const sticker = message.localSticker
+      if (!sticker) continue
+      if (!delivered.includes(message)) {
+        if (sticker.reference) await this.recordPlatformDeliveryOutcome(story.id, sticker.reference, 'cancelled', 'text-not-delivered')
+        continue
+      }
+      const participant = await this.getParticipant(message.participantId)
+      const asset = this.stickerById.get(sticker.assetId)
+      const bot = participant && this.canHandleParticipant(participant) ? this.findBotForParticipant(participant) : undefined
+      if (!participant || !asset || !bot) {
+        if (sticker.reference) await this.recordPlatformDeliveryOutcome(story.id, sticker.reference, 'failed', 'sticker-target-or-asset-unavailable')
+        continue
+      }
+      await this.sendSticker(story, { bot, platform: participant.platform } as Pick<Session, 'bot' | 'platform'>,
+        participant.channelId, asset, undefined, sticker.reference)
+    }
     return delivered
   }
 
@@ -7297,6 +7356,21 @@ export function calibratedNativeFaceWillingness(semantic: NativeFaceSemantic, wi
   return Math.min(0.9, normalizeExpressionThreshold(willingness) * (0.25 + evidence * 0.75))
 }
 
+/** 对方只发了 QQ 原生表情时，让已决定发送的简短回复可自然附一个同义表情。 */
+export function nativeFaceForIncomingQQFace(incoming: string, replyContent: string | undefined, capabilities?: ChatActionCapabilities): NativeFaceSemantic | undefined {
+  if (!capabilities?.nativeFaces?.length || !replyContent?.trim() || replyContent.length > 60) return undefined
+  const normalized = incoming.replace(/<\/face>/gi, '').trim()
+  const faceOnly = /^(?:\[QQ 原生表情[^\]]+\]\s*)+$/.test(normalized)
+  const directRequest = /(?:发|来|给|回|用).{0,8}QQ.{0,5}(?:小表情|原生表情)|QQ.{0,5}(?:小表情|原生表情).{0,8}(?:发|来|给|回|用)/i.test(normalized)
+  if (!faceOnly && !directRequest || /(?:不发|不想发|不给|别闹|算了|拒绝)/.test(replyContent)) return undefined
+  const matching = capabilities.nativeFaces.find(semantic => calibratedNativeFaceWillingness(
+    semantic, 0.85, replyContent,
+  ) >= capabilities.expressionThreshold)
+  if (matching) return matching
+  return directRequest && /(?:好|来|给你|发你|看这个|可以)/.test(replyContent) && capabilities.nativeFaces.includes('smile')
+    ? 'smile' : undefined
+}
+
 function targetableMessageId(value: unknown) {
   const id = String(value ?? '').trim()
   return /^-?\d+$/.test(id) && id !== '0' ? id : undefined
@@ -7588,7 +7662,68 @@ export function normalizeGroupVisibleReply(raw: NarrativeDecision['groupReply'],
 
 function requiresVisibleReplyRecovery(phase: NarrativeRequest['phase'], groupContext: GroupContext | undefined, decision: NarrativeDecision) {
   if (phase !== 'user-message') return false
-  return groupContext ? !hasStructuredGroupReply(decision) : !hasStructuredInteraction(decision.interaction)
+  return groupContext ? !hasStructuredGroupReply(decision)
+    : !hasStructuredInteraction(decision.interaction)
+      || decision.interaction?.reply.mode === 'none' && scriptClaimsVisiblePrivateSend(decision.script)
+}
+
+/** 只识别紧挨着引号原话的明确发送动作；含糊的想法仍可合法沉默。 */
+export function scriptClaimsVisiblePrivateSend(script: string | undefined) {
+  const cues = [...String(script ?? '').matchAll(/[”"」』][^”"」』]{0,40}(?:发出去|发完|发了出去|按下发送|点击发送)/g)]
+  return cues.some(([text]) => !/(?:没|没有|未|不曾|并未|尚未)[^”"」』]{0,5}(?:发出去|发完|发了出去|按下发送|点击发送)/.test(text))
+}
+
+/** 有明确发送动作的图片才需要本地素材回执；用户的索要或主角的念头不算。 */
+export function scriptClaimsStickerSend(script: string | undefined) {
+  return String(script ?? '').split(/[。！？\n]/).some(clause => {
+    if (/(?:刚才|先前|之前)[^。]{0,12}(?:发|发送|拖)/.test(clause)
+      || /(?:想|打算|准备|差点|没|未)[^。]{0,12}(?:把|将|发送|发了)/.test(clause)) return false
+    return /(?:把|将)[^。]{0,80}(?:表情包|贴图|图片|猫图|那张图)[^。]{0,100}(?:发出去|发给|发送|拖了进去|拖进聊天框|拖进对话框)/.test(clause)
+      || /(?:发了|发出|发给|发送)(?:一张|那张|这张|一个)[^。]{0,30}(?:表情包|贴图|图片|猫图)/.test(clause)
+  })
+}
+
+/** 仅在剧本原话与一条已知素材描述唯一吻合时补全发送动作。 */
+export function recoverClaimedSticker(decision: NarrativeDecision, catalog: StickerCatalogEntry[]) {
+  if (decision.localMedia || !scriptClaimsStickerSend(decision.script)) return decision
+  const script = decision.script ?? ''
+  const matches = catalog.filter(item => {
+    const phrase = item.description.trim().replace(/(?:的)?表情包[。！.!]?$/, '').replace(/[。！.!]$/, '').trim()
+    return phrase.length >= 16 && script.includes(phrase)
+  })
+  if (matches.length !== 1) return decision
+  return { ...decision, localMedia: { assetId: matches[0].assetId, placement: 'after-text' as const, willingness: 1 } }
+}
+
+/** 仅补全本回合真实来信之后的一条明确原话；多条或历史复述交给重写。 */
+export function recoverQuotedPrivateSend(decision: NarrativeDecision, userMessage: string | undefined, runtime: RuntimeConfig) {
+  if (!userMessage?.trim() || decision.interaction?.seen !== true || decision.interaction.reply.mode !== 'none'
+    || decision.authoredActions?.length || decision.groupReply?.mode === 'immediate' || decision.crossConversationActions?.length) return decision
+  const script = decision.script ?? ''
+  const receivedAt = script.lastIndexOf(userMessage.trim())
+  if (receivedAt < 0) return decision
+  const candidates = [...script.slice(receivedAt + userMessage.trim().length)
+    .matchAll(/[“"]([^“”"\n]{1,500})[”"][ \t\r\n]{0,20}(?:发出去|发完|发了出去|按下发送|点击发送)/g)]
+    .filter(([text]) => scriptClaimsVisiblePrivateSend(text))
+  if (candidates.length !== 1) return decision
+  const content = normalizeVisibleMessageContent(candidates[0][1], runtime.maxMessageCharacters, runtime.messageSeparator)
+  if (!content) return decision
+  return { ...decision, interaction: { seen: true, reply: { mode: 'immediate' as const, content } } }
+}
+
+/** 剧本只有一条明确的 say 发送动作时，补回模型漏填的私聊传输字段。 */
+export function recoverAuthoredPrivateSend(decision: NarrativeDecision, runtime: RuntimeConfig) {
+  if (decision.interaction?.reply.mode === 'immediate' && decision.interaction.reply.content
+    || decision.interaction?.reply.mode === 'delayed'
+    || decision.groupReply?.mode === 'immediate' || decision.crossConversationActions?.length
+    || decision.authoredActions?.length !== 1) return decision
+  const action = decision.authoredActions[0]
+  const script = decision.script ?? ''
+  if (!action.content.trim() || script.slice(action.start, action.end) !== action.content) return decision
+  const content = normalizeVisibleMessageContent(action.content, runtime.maxMessageCharacters, runtime.messageSeparator)
+  if (!content) return decision
+  return { ...decision, interaction: { seen: decision.interaction?.seen === true,
+    reply: { mode: 'immediate' as const, content } } }
 }
 
 export function visibleReplyMode(decision: NarrativeDecision, phase: NarrativeRequest['phase'], groupContext?: GroupContext) {
@@ -7621,7 +7756,7 @@ function hasStructuredInteraction(value: unknown) {
   if (!isRecord(value) || typeof value.seen !== 'boolean' || !isRecord(value.reply)) return false
   const mode = value.reply.mode
   if (mode !== 'none' && mode !== 'immediate' && mode !== 'delayed') return false
-  if (mode === 'none') return true
+  if (mode === 'none') return !value.reply.actionId && !(typeof value.reply.content === 'string' && value.reply.content.trim())
   if (typeof value.reply.content !== 'string' || !value.reply.content.trim()) return false
   return mode === 'immediate' || typeof value.reply.sendAt === 'string' && !!value.reply.sendAt.trim()
 }
@@ -7832,7 +7967,7 @@ function hasExplicitPresenceEvidence(status: ScenePresenceState['status'], entri
   return /一起|同行|身边|来到|抵达|进入|走进|拉着|坐在|站在|陪着/.test(text)
 }
 
-function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date, permitMessages: boolean, runtime: RuntimeConfig, shared: SharedStoryConfig, currentParticipantId: string, permittedParticipantIds: Set<string>, phase: NarrativeRequest['phase'] = 'advance', memory?: MemoryConfig, refreshContinuity = false) {
+export function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date, permitMessages: boolean, runtime: RuntimeConfig, shared: SharedStoryConfig, currentParticipantId: string, permittedParticipantIds: Set<string>, phase: NarrativeRequest['phase'] = 'advance', memory?: MemoryConfig, refreshContinuity = false) {
   raw = resolveAuthoredActions(raw, false, runtime.messageSeparator)
   const script = typeof raw?.script === 'string'
     ? raw.script.trim().slice(0, runtime.maxScriptCharacters)
@@ -7857,7 +7992,9 @@ function normalizeDecision(raw: NarrativeDecision, from: Date, now: Date, permit
     : []
   const proactive = phase === 'advance'
   const agencyGatedProactive = proactive && !isRecord(raw?.proactiveContact)
-  const crossConversationActions = permitMessages && shared.allowCrossConversationMessages && Array.isArray(raw?.crossConversationActions)
+  // 后台主动联系仍受账号白名单和 Agency 约束；普通私聊跨账号开关保持关闭。
+  const allowBackgroundContact = phase === 'advance' && runtime.allowProactiveMessages
+  const crossConversationActions = permitMessages && (shared.allowCrossConversationMessages || allowBackgroundContact) && Array.isArray(raw?.crossConversationActions)
     ? raw.crossConversationActions
       .map(action => normalizeConversationAction(action, runtime, permittedParticipantIds, currentParticipantId, now, agencyGatedProactive))
       .filter((action): action is NonNullable<ReturnType<typeof normalizeConversationAction>> => !!action)
@@ -8042,7 +8179,7 @@ function hasCompactionEvidence(sourceEntryIds: number[] | undefined, entries: Sc
   return sourceEntryIds.some(id => ids.has(id))
 }
 
-function normalizeConversationAction(value: unknown, runtime: RuntimeConfig, permittedParticipantIds: Set<string>, currentParticipantId: string, now = new Date(), proactive = false) {
+function normalizeConversationAction(value: unknown, runtime: RuntimeConfig, permittedParticipantIds: Set<string>, currentParticipantId: string, now = new Date(), proactive = false): ConversationActionDraft | undefined {
   if (!isRecord(value) || typeof value.participantId !== 'string' || !value.participantId || value.participantId === currentParticipantId) return undefined
   if (!permittedParticipantIds.has(value.participantId) || (value.mode !== 'immediate' && value.mode !== 'delayed')) return undefined
   // 主动联系与私聊回复共用同一可见文本合约：括号表情标签等不得漏出到投递。
@@ -8055,7 +8192,11 @@ function normalizeConversationAction(value: unknown, runtime: RuntimeConfig, per
     : undefined
   if (proactive && (willingness === undefined || willingness < (runtime.proactiveWillingnessThreshold ?? 0.65))) return undefined
   const reason = typeof value.reason === 'string' ? clip(value.reason, 300) : undefined
-  if (value.mode === 'immediate') return { participantId: value.participantId, mode: value.mode, content, ...(willingness === undefined ? {} : { willingness }), ...(reason ? { reason } : {}) }
+  const media = isRecord(value.localMedia) && typeof value.localMedia.assetId === 'string'
+    && typeof value.localMedia.willingness === 'number' && Number.isFinite(value.localMedia.willingness)
+    ? { assetId: clip(value.localMedia.assetId, 180), placement: 'after-text' as const, willingness: clampNumber(value.localMedia.willingness, 0, 0, 1) }
+    : undefined
+  if (value.mode === 'immediate') return { participantId: value.participantId, mode: value.mode, content, ...(willingness === undefined ? {} : { willingness }), ...(reason ? { reason } : {}), ...(media ? { localMedia: media } : {}) }
   const sendAt = toDate(value.sendAt)
   const delay = sendAt?.getTime() - now.getTime()
   if (!sendAt || delay < runtime.minimumDelayedReplySeconds * 1_000 || delay > runtime.maximumDelayedReplyMinutes * Time.minute) return undefined

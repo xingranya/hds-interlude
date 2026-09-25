@@ -99,10 +99,13 @@ export function platformActionReference(
   kind: Exclude<ScriptDeliverySegmentKind, 'message'>,
   content?: string,
 ) {
-  const event = commit?.events.find(item => item.kind === 'platform-action')
-  if (!event || !Number.isSafeInteger(scriptEntryId)) return undefined
-  const segment = deliverySegments(event).find(item => item.kind === kind && (content === undefined || item.content === content))
-  return segment ? deliveryReference(event, scriptEntryId, segment.index) : undefined
+  if (!Number.isSafeInteger(scriptEntryId)) return undefined
+  for (const event of commit?.events ?? []) {
+    if (event.kind !== 'platform-action') continue
+    const segment = deliverySegments(event).find(item => item.kind === kind && (content === undefined || item.content === content))
+    if (segment) return deliveryReference(event, scriptEntryId, segment.index)
+  }
+  return undefined
 }
 
 export function aggregateDeliveryStatus(segments: ScriptDeliverySegment[]): ScriptDeliveryStatus {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { OpenAICompatibleNarrator, systemPrompt, toPromptPayload } from '../src/narrator'
 import { emptyStorySetting, emptyStoryState, InterludeStory, NarrativeRequest } from '../src/types'
+import { recoverClaimedSticker, scriptClaimsStickerSend } from '../src/service'
 
 const now = new Date('2026-08-31T10:00:00.000Z')
 
@@ -67,4 +68,36 @@ test('sticker describer supports prompt-only transport while retaining its JSON 
   const description = await narrator.describeSticker('data:image/png;base64,AA==', 'image/png', 'hello.png', false, 'prompt-only')
   assert.equal(description?.description, '一只挥手的猫')
   assert.equal('response_format' in calls[0], false)
+})
+
+test('MiniMax Anthropic sticker describer sends an image block and reads JSON text', async () => {
+  let sent: any
+  const ctx = { http: { post: async (url: string, body: any) => {
+    sent = { url, body }
+    return { content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: '{"description":"一只惊讶的小猫","aliases":["震惊"]}' }] }
+  } } }
+  const narrator = new OpenAICompatibleNarrator(ctx as any, {
+    providers: [{ label: 'MiniMax', mode: 'minimax-anthropic', enabled: true, apiKey: 'test', model: 'MiniMax-M3',
+      temperature: 0.8, topP: 1, maxTokens: 512, timeout: 20_000, responseFormat: 'prompt-only', extraHeaders: '', extraBody: '', useForStickers: true }],
+    failover: { enabled: true, strategy: 'priority', maxAttemptsPerProvider: 1, cooldownMinutes: 5 },
+  } as any, true)
+  const result = await narrator.describeSticker('data:image/png;base64,AA==', 'image/png', 'cat.png', false)
+  assert.deepEqual(result, { description: '一只惊讶的小猫', aliases: ['震惊'] })
+  assert.equal(sent.url, 'https://api.minimax.cn/anthropic/v1/messages')
+  assert.deepEqual(sent.body.messages[0].content[1], { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AA==' } })
+})
+
+test('only a completed sticker send in prose needs a real local media action', () => {
+  assert.equal(scriptClaimsStickerSend('她把那张猫咪表情包拖了进去，又敲了一句发完。'), true)
+  assert.equal(scriptClaimsStickerSend('她把那张猫咪表情包又点了一下，弹出发送框，她点了发送。'), true)
+  assert.equal(scriptClaimsStickerSend('对方说“发一张可爱的表情包给我看看”，她想了想但没发送。'), false)
+  assert.equal(scriptClaimsStickerSend('她记得刚才发了一张猫图，但对方说没收到。'), false)
+})
+
+test('an unambiguous claimed sticker is mapped to its real local asset', () => {
+  const decision = { script: '她把那张猫咪表情包又点了一下，弹出发送框，她点了发送。一只卡通小猫咪趴在桌面上，伸出舌头微笑。' } as any
+  const cat = { assetId: 'yuexin-cat/kitten-0', description: '一只卡通小猫咪趴在桌面上，伸出舌头微笑的表情包。' } as any
+  assert.equal(recoverClaimedSticker(decision, [cat]).localMedia?.assetId, cat.assetId)
+  assert.equal(recoverClaimedSticker(decision, [cat, { ...cat, assetId: 'duplicate' }]), decision)
+  assert.equal(recoverClaimedSticker({ ...decision, script: '她想发一张表情包，但没发送。' }, [cat]).localMedia, undefined)
 })
